@@ -783,10 +783,11 @@ function New-Uninstaller {
     Green="`$e[38;2;60;220;140m"; Red="`$e[38;2;240;80;90m"
     White="`$e[38;2;220;225;240m"; Dim="`$e[38;2;90;95;115m"; Reset="`$e[0m"
 }
+`$sep = [string]::new([char]0x2550, 40)
 
 Write-Host ""
 Write-Host "`$(`$C.Cyan)  GhostShell Uninstaller`$(`$C.Reset)"
-Write-Host "`$(`$C.Dim)  $([char]0x2550 * 40)`$(`$C.Reset)"
+Write-Host "`$(`$C.Dim)  `$sep`$(`$C.Reset)"
 Write-Host ""
 Write-Host "`$(`$C.White)  This will remove GhostShell and all Windows integrations.`$(`$C.Reset)"
 Write-Host "`$(`$C.Red)  ! Session data in %LOCALAPPDATA%\GhostShell\data will be deleted.`$(`$C.Reset)"
@@ -944,10 +945,65 @@ function Show-Summary {
 }
 
 # ============================================================================
+#  REMOVE OLD INSTALLATION (silent cleanup)
+# ============================================================================
+
+function Remove-OldInstall {
+    # Only run if a previous installation exists
+    if (-not (Test-Path $Script:UninstallReg)) { return }
+
+    Write-Host ""
+    Write-Host "  $($C.Yellow)! $($C.White)Existing GhostShell installation detected$($C.Reset)"
+    Write-Info "Cleaning up old installation before upgrade..."
+
+    # Stop running instance
+    $running = Get-Process -Name "ghostshell" -ErrorAction SilentlyContinue
+    if ($running) {
+        $running | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        Write-Info "Stopped running GhostShell process"
+    }
+
+    # Remove Start Menu shortcut
+    $startLnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\GhostShell.lnk"
+    if (Test-Path $startLnk) { Remove-Item $startLnk -Force -ErrorAction SilentlyContinue }
+
+    # Remove Desktop shortcut
+    $deskLnk = "$env:USERPROFILE\Desktop\GhostShell.lnk"
+    if (Test-Path $deskLnk) { Remove-Item $deskLnk -Force -ErrorAction SilentlyContinue }
+
+    # Remove registry (Apps & Features)
+    if (Test-Path $Script:UninstallReg) {
+        Remove-Item $Script:UninstallReg -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # Remove file associations
+    @("HKCU:\Software\Classes\.ghost", "HKCU:\Software\Classes\GhostShell.Recording") | ForEach-Object {
+        if (Test-Path $_) { Remove-Item $_ -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Remove context menu
+    $ctxKey = "HKCU:\Software\Classes\Directory\Background\shell\GhostShell"
+    if (Test-Path $ctxKey) { Remove-Item $ctxKey -Recurse -Force -ErrorAction SilentlyContinue }
+
+    # Remove old binary (so new copy works)
+    $oldBin = "$Script:BinDir\$Script:BinaryName"
+    if (Test-Path $oldBin) { Remove-Item $oldBin -Force -ErrorAction SilentlyContinue }
+
+    # Remove old launcher/uninstaller scripts
+    @("$Script:InstallRoot\ghostshell-launcher.ps1", "$Script:InstallRoot\uninstall.ps1") | ForEach-Object {
+        if (Test-Path $_) { Remove-Item $_ -Force -ErrorAction SilentlyContinue }
+    }
+
+    Write-Ok "Old installation cleaned up"
+}
+
+# ============================================================================
 #  MAIN EXECUTION
 # ============================================================================
 
 Show-Splash
+Remove-OldInstall
 Test-SystemRequirements
 Install-Prerequisites
 Get-Repository
