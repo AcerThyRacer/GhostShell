@@ -128,6 +128,6 @@ status_bar = "bottom"
 # Show stealth indicators in status bar
 show_indicators = true
 # Border style: single, double, rounded, thick, none
-border_style = "rounded"
+border_style = "none"
 # Transparency (terminal-dependent)
 transparent = false

@@ -83,6 +83,50 @@ fn border_type(style: &str) -> ratatui::widgets::BorderType {
     }
 }
 
+/// GhostShell ASCII art welcome banner
+fn welcome_banner(fg: Color, accent: Color, dim: Color) -> Vec<Line<'static>> {
+    let art_lines = [
+        r"   ______  __               __  _____ __         ____  ",
+        r"  / ____/ / /_  ____  _____/ /_/ ___// /_  ___  / / /  ",
+        r" / / __  / __ \/ __ \/ ___/ __/\__ \/ __ \/ _ \/ / /   ",
+        r"/ /_/ / / / / / /_/ (__  ) /_ ___/ / / / /  __/ / /    ",
+        r"\____/ /_/ /_/\____/____/\__//____/_/ /_/\___/_/_/     ",
+    ];
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
+
+    for art in &art_lines {
+        lines.push(Line::from(Span::styled(
+            art.to_string(),
+            Style::default().fg(accent),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Stealth Terminal Multiplexer v0.1.0",
+        Style::default().fg(dim),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  > Type to begin. Ctrl-G for commands.",
+        Style::default().fg(fg),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  > Ctrl-G : for command mode",
+        Style::default().fg(dim),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  > Ctrl-G h/v to split panes",
+        Style::default().fg(dim),
+    )));
+    lines.push(Line::from(""));
+
+    lines
+}
+
 /// Main render function
 pub fn render(f: &mut Frame, app: &GhostApp) {
     let theme = UiTheme::from_scheme(&app.config.theme.scheme);
@@ -146,28 +190,39 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
 
         // Get pane content
         let content_lines: Vec<Line> = if let Some(pane) = app.panes.panes.get(pane_id) {
-            pane.visible_content()
-                .iter()
-                .map(|line| {
-                    Line::from(Span::styled(
-                        line.to_string(),
-                        Style::default().fg(theme.fg),
-                    ))
-                })
-                .collect()
+            let visible = pane.visible_content();
+            let has_content = visible.iter().any(|l| !l.is_empty());
+
+            if has_content {
+                visible
+                    .iter()
+                    .map(|line| {
+                        Line::from(Span::styled(
+                            line.to_string(),
+                            Style::default().fg(theme.fg),
+                        ))
+                    })
+                    .collect()
+            } else {
+                // Show welcome banner for empty panes
+                welcome_banner(theme.fg, theme.border_active, Color::Rgb(80, 85, 100))
+            }
         } else {
-            vec![Line::from(Span::styled(
-                "No PTY attached",
-                Style::default().fg(Color::Rgb(100, 50, 50)),
-            ))]
+            // No PTY — show welcome banner
+            welcome_banner(theme.fg, theme.border_active, Color::Rgb(80, 85, 100))
         };
 
-        let title = if is_stealth {
-            String::new() // Hide titles in stealth mode
+        // Minimal title — empty for borderless, short for bordered
+        let title = if hide_borders || is_stealth {
+            String::new()
         } else if let Some(pane) = app.panes.panes.get(pane_id) {
-            format!(" {} ", pane.title)
+            if pane.title.is_empty() {
+                String::new()
+            } else {
+                format!(" {} ", pane.title)
+            }
         } else {
-            " shell ".to_string()
+            String::new()
         };
 
         let border_color = if is_active {
@@ -217,6 +272,7 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
         render_command_input(f, size, app, &theme);
     }
 }
+
 
 /// Render the lock screen
 fn render_lock_screen(f: &mut Frame, area: Rect, theme: &UiTheme) {

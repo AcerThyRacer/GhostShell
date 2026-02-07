@@ -111,41 +111,41 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &GhostApp) {
         AppMode::Panic => theme.alert_panic,
     };
 
-    // Build left side: mode + indicators
+    // Build left side: minimal > prompt + mode
     let mut left_spans = vec![
         Span::styled(
-            format!(" 👻 {} ", mode_str),
+            format!(" > {} ", mode_str),
             Style::default().fg(Color::Black).bg(mode_color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ", Style::default().bg(theme.bg)),
     ];
 
-    // Add stealth indicators
+    // Add stealth indicators (ASCII)
     left_spans.extend(build_indicators(&app.stealth_indicators, &theme));
 
     // Build right side: session info + alert count
     let alert_count = app.alert_queue.unacknowledged();
     let pane_count = app.panes.count();
     let tab_info = format!(
-        "Tab {}/{} ",
+        "{}/{}",
         app.layout.active_tab + 1,
         app.layout.tab_count()
     );
 
     let mut right_spans = vec![
         Span::styled(
-            format!(" {} panes ", pane_count),
+            format!(" {}p ", pane_count),
             Style::default().fg(theme.fg).bg(theme.bg),
         ),
         Span::styled(
-            format!("│ {} ", tab_info),
+            format!("| tab {} ", tab_info),
             Style::default().fg(theme.fg).bg(theme.bg),
         ),
     ];
 
     if alert_count > 0 {
         right_spans.push(Span::styled(
-            format!(" ⚠ {} alerts ", alert_count),
+            format!(" ! {} ", alert_count),
             Style::default()
                 .fg(Color::Black)
                 .bg(theme.alert_warn)
@@ -186,33 +186,33 @@ pub fn render_status_bar(f: &mut Frame, area: Rect, app: &GhostApp) {
     }
 }
 
-/// Build stealth indicator spans
+/// Build stealth indicator spans (ASCII only)
 fn build_indicators(indicators: &StealthIndicators, theme: &StatusBarTheme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
-    let add_indicator = |spans: &mut Vec<Span<'static>>, icon: &str, active: bool, theme: &StatusBarTheme| {
+    let add = |spans: &mut Vec<Span<'static>>, label: &str, active: bool, theme: &StatusBarTheme| {
         let color = if active {
             theme.indicator_active
         } else {
             theme.indicator_inactive
         };
         spans.push(Span::styled(
-            format!("{} ", icon),
+            format!("{} ", label),
             Style::default().fg(color).bg(theme.bg),
         ));
     };
 
-    add_indicator(&mut spans, "🔒", indicators.encrypted, theme);
-    add_indicator(&mut spans, "👻", indicators.phantom, theme);
-    add_indicator(&mut spans, "🎭", indicators.decoy_active, theme);
-    add_indicator(&mut spans, "🛡️", indicators.ids_active, theme);
-    add_indicator(&mut spans, "⏺", indicators.recording, theme);
-    add_indicator(&mut spans, "💀", indicators.dead_man_armed, theme);
-    add_indicator(&mut spans, "🔗", indicators.tunnel_active, theme);
+    add(&mut spans, "[E]", indicators.encrypted, theme);
+    add(&mut spans, "[G]", indicators.phantom, theme);
+    add(&mut spans, "[D]", indicators.decoy_active, theme);
+    add(&mut spans, "[I]", indicators.ids_active, theme);
+    add(&mut spans, "[R]", indicators.recording, theme);
+    add(&mut spans, "[X]", indicators.dead_man_armed, theme);
+    add(&mut spans, "[T]", indicators.tunnel_active, theme);
 
     if indicators.locked {
         spans.push(Span::styled(
-            "🔐 LOCKED ",
+            "LOCKED ",
             Style::default()
                 .fg(theme.alert_critical)
                 .bg(theme.bg)
@@ -222,3 +222,4 @@ fn build_indicators(indicators: &StealthIndicators, theme: &StatusBarTheme) -> V
 
     spans
 }
+
