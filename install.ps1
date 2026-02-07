@@ -687,9 +687,15 @@ function Add-TerminalProfile {
 
             # Inject scheme if not present
             if ($raw -notmatch '"name"\s*:\s*"GhostShell"') {
-                # Insert scheme before the last ] in "schemes": [...]
-                # Find the last entry in schemes array and add comma + new entry
-                $raw = $raw -replace '("schemes"\s*:\s*\[[\s\S]*?)(\]\s*,)', "`$1,$schemeFragment`$2"
+                # Check if schemes array has existing entries
+                if ($raw -match '"schemes"\s*:\s*\[\s*\]') {
+                    # Empty array — insert without comma
+                    $raw = $raw -replace '("schemes"\s*:\s*)\[\s*\]', "`$1[$schemeFragment]"
+                }
+                else {
+                    # Non-empty — insert with comma after last entry
+                    $raw = $raw -replace '("schemes"\s*:\s*\[[\s\S]*?\})\s*(\])', "`$1,$schemeFragment`$2"
+                }
             }
 
             # Inject profile into list array
