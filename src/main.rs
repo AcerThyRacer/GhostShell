@@ -1,7 +1,6 @@
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::env;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn main() {
@@ -45,9 +44,9 @@ fn main() {
 
 fn get_prompt() -> String {
     let cwd = env::current_dir()
-        .unwrap_or_else(|_| Path::new("/").to_path_buf())
-        .display()
-        .to_string();
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "?".to_string());
     format!("ghostshell:{}> ", cwd)
 }
 
@@ -77,11 +76,22 @@ fn execute_command(input: &str) -> bool {
 
 fn handle_cd(args: &[&str]) {
     let new_dir = if args.is_empty() {
-        match env::var("HOME") {
-            Ok(home) => home,
-            Err(_) => {
-                eprintln!("cd: HOME not set");
-                return;
+        // Get home directory in a cross-platform way
+        if cfg!(target_os = "windows") {
+            match env::var("USERPROFILE") {
+                Ok(home) => home,
+                Err(_) => {
+                    eprintln!("cd: USERPROFILE not set");
+                    return;
+                }
+            }
+        } else {
+            match env::var("HOME") {
+                Ok(home) => home,
+                Err(_) => {
+                    eprintln!("cd: HOME not set");
+                    return;
+                }
             }
         }
     } else {
