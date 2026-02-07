@@ -269,33 +269,60 @@ function Get-Repository {
 function Build-GhostShell {
     Write-Step "Building GhostShell (Release Mode)"
     Write-Info "This may take 2-5 minutes on first build..."
+    Write-Info "[debug] Build function v2 — Start-Process isolation"
 
     Push-Location $Script:SourceDir
 
-    # Use cmd /c to prevent PowerShell from wrapping stderr lines as ErrorRecord
-    # objects which causes NativeCommandError. Cargo writes progress to stderr.
-    $oldEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        cmd /c "cargo build --release 2>&1" | ForEach-Object {
-            $line = $_.ToString()
-            if ($line -match 'Compiling (.+?) v') {
-                Write-Host "$($C.Dim)  │ $($C.Ghost)⚙$($C.Dim) Compiling $($Matches[1])$($C.Reset)" -NoNewline
-                Write-Host "`r" -NoNewline
-            }
-            elseif ($line -match '^error') {
-                Write-Host "$($C.Red)  │ $line$($C.Reset)"
+    # Use Start-Process to completely isolate cargo's stderr from PowerShell.
+    # PS 5.1 converts stderr to ErrorRecord objects which throw NativeCommandError
+    # when $ErrorActionPreference = "Stop". By using Start-Process with file-based
+    # redirection, stderr NEVER touches PowerShell's pipeline.
+    $buildLog = "$env:TEMP\ghostshell-build-stderr.log"
+    $buildStdout = "$env:TEMP\ghostshell-build-stdout.log"
+    Remove-Item $buildLog, $buildStdout -ErrorAction SilentlyContinue
+
+    $proc = Start-Process -FilePath "cargo" `
+        -ArgumentList "build", "--release" `
+        -WorkingDirectory (Get-Location).Path `
+        -NoNewWindow -PassThru `
+        -RedirectStandardError $buildLog `
+        -RedirectStandardOutput $buildStdout
+
+    # Poll the build log for real-time progress
+    $lastCrate = ""
+    while (-not $proc.HasExited) {
+        Start-Sleep -Milliseconds 500
+        if (Test-Path $buildLog) {
+            $tail = Get-Content $buildLog -Tail 5 -ErrorAction SilentlyContinue
+            foreach ($line in $tail) {
+                if ($line -match 'Compiling (.+?) v' -and $Matches[1] -ne $lastCrate) {
+                    $lastCrate = $Matches[1]
+                    Write-Host "`r$($C.Dim)  │ $($C.Ghost)⚙$($C.Dim) Compiling $lastCrate$($C.Reset)              " -NoNewline
+                }
             }
         }
     }
-    finally {
-        $ErrorActionPreference = $oldEAP
+    $proc.WaitForExit()
+    $buildResult = $proc.ExitCode
+    Write-Host ""
+
+    # Show errors if build failed
+    if ($buildResult -ne 0 -and (Test-Path $buildLog)) {
+        Write-Host ""
+        Get-Content $buildLog | ForEach-Object {
+            if ($_ -match '^error') {
+                Write-Host "$($C.Red)  │ $_$($C.Reset)"
+            }
+        }
     }
-    $buildResult = $LASTEXITCODE
+
+    # Cleanup temp files
+    Remove-Item $buildLog, $buildStdout -ErrorAction SilentlyContinue
+
     Pop-Location
 
     if ($buildResult -ne 0) {
-        Write-Fail "Build failed. Check errors above."
+        Write-Fail "Build failed (exit code: $buildResult). Check errors above."
     }
 
     $builtBinary = "$Script:SourceDir\target\release\$Script:BinaryName"
