@@ -1,6 +1,4 @@
-# ╔══════════════════════════════════════════════════════════════╗
-# ║              GhostShell — Windows Installer (PowerShell)     ║
-# ╚══════════════════════════════════════════════════════════════╝
+# GhostShell - Windows Installer (PowerShell)
 
 $ErrorActionPreference = "Stop"
 
@@ -19,8 +17,7 @@ Write-Host "  GhostShell Installer" -ForegroundColor Magenta
 Write-Host "  ========================" -ForegroundColor Magenta
 Write-Host ""
 
-# ── Check for Rust toolchain ──────────────────────────────────
-# Ensure .cargo\bin is on PATH for this session (rustup doesn't always persist it)
+# -- Check for Rust toolchain --
 $CargoBin = "$env:USERPROFILE\.cargo\bin"
 if ($env:PATH -notlike "*$CargoBin*") {
     $env:PATH = "$CargoBin;$env:PATH"
@@ -35,7 +32,6 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     & $RustupInit -y --quiet
     Remove-Item $RustupInit -ErrorAction SilentlyContinue
 
-    # Refresh PATH
     $env:PATH = "$CargoBin;$env:PATH"
 
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
@@ -46,16 +42,16 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Ok "Rust toolchain found."
 }
 
-# ── Check for Git ─────────────────────────────────────────────
+# -- Check for Git --
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Fail "Git is not installed. Please install Git from https://git-scm.com and try again."
 }
 
-# ── Clone or update the repository ────────────────────────────
+# -- Clone or update the repository --
 if (Test-Path "$InstallDir\.git") {
     Write-Info "Updating existing installation..."
     Push-Location $InstallDir
-    git pull --quiet 2>&1 | Out-Null
+    & git pull --quiet
     Pop-Location
     Write-Ok "Repository updated."
 } else {
@@ -64,38 +60,39 @@ if (Test-Path "$InstallDir\.git") {
         Remove-Item -Recurse -Force $InstallDir
     }
     Write-Info "Cloning GhostShell..."
-    git clone --quiet $Repo $InstallDir
-    if (-not $?) { Write-Fail "Failed to clone repository." }
+    & git clone --quiet $Repo $InstallDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "Failed to clone repository."
+    }
     Write-Ok "Repository cloned."
 }
 
-# ── Build ─────────────────────────────────────────────────────
+# -- Build --
 Push-Location $InstallDir
 Write-Info "Building GhostShell (release mode)... this may take a few minutes."
-$buildOutput = cargo build --release 2>&1
+& cargo build --release
 if ($LASTEXITCODE -ne 0) {
     Pop-Location
-    Write-Host ($buildOutput | Out-String) -ForegroundColor Red
-    Write-Fail "Build failed. See errors above."
+    Write-Fail "Build failed. Check the errors above."
 }
 Pop-Location
 Write-Ok "Build complete."
 
-# ── Verify binary was created ─────────────────────────────────
+# -- Verify binary was created --
 $BuiltBinary = "$InstallDir\target\release\$BinaryName"
 if (-not (Test-Path $BuiltBinary)) {
-    Write-Fail "Binary not found at $BuiltBinary — build may have failed silently."
+    Write-Fail "Binary not found at $BuiltBinary. Build may have failed."
 }
 
-# ── Install binary ────────────────────────────────────────────
+# -- Install binary --
 if (-not (Test-Path $BinDir)) {
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 }
 
-Copy-Item "$InstallDir\target\release\$BinaryName" "$BinDir\$BinaryName" -Force
+Copy-Item $BuiltBinary "$BinDir\$BinaryName" -Force
 Write-Ok "Installed to $BinDir\$BinaryName"
 
-# ── Ensure BinDir is on user PATH ─────────────────────────────
+# -- Ensure BinDir is on user PATH --
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$BinDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$BinDir;$UserPath", "User")
@@ -104,7 +101,7 @@ if ($UserPath -notlike "*$BinDir*") {
     Write-Warn "You may need to restart your terminal for PATH changes to take effect."
 }
 
-# ── Done ──────────────────────────────────────────────────────
+# -- Done --
 Write-Host ""
 Write-Ok "GhostShell installed successfully!"
 Write-Host ""
