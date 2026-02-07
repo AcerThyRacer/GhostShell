@@ -478,9 +478,27 @@ function Install-Application {
     }
     Write-Ok "Directory structure created"
 
-    # Copy binary
+    # Copy binary (stop running instance first if locked)
     $builtBinary = "$Script:SourceDir\target\release\$Script:BinaryName"
-    Copy-Item $builtBinary "$Script:BinDir\$Script:BinaryName" -Force
+    $running = Get-Process -Name "ghostshell" -ErrorAction SilentlyContinue
+    if ($running) {
+        Write-Info "Stopping running GhostShell instance..."
+        $running | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+    try {
+        Copy-Item $builtBinary "$Script:BinDir\$Script:BinaryName" -Force
+    }
+    catch {
+        Write-Warn "Binary locked. Scheduling copy on next boot..."
+        $copyCmd = "Copy-Item '$builtBinary' '$Script:BinDir\$Script:BinaryName' -Force"
+        $null = Register-ScheduledTask -TaskName "GhostShellUpdate" `
+            -Action (New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command $copyCmd") `
+            -Trigger (New-ScheduledTaskTrigger -AtLogOn) `
+            -Settings (New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter 00:01:00) `
+            -ErrorAction SilentlyContinue
+        Write-Warn "Binary will update on next login"
+    }
     Write-Ok "Binary installed to $($C.Dim)$Script:BinDir"
 
     # Default config
