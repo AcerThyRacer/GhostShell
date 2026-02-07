@@ -3,7 +3,6 @@
 // ║         Detect if running inside a monitored/sandboxed env       ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
-use std::collections::HashSet;
 
 /// Honeypot detection result
 #[derive(Debug, Clone)]

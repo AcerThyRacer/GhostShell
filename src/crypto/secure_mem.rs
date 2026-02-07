@@ -3,7 +3,7 @@
 // ║         mlock'd, zeroize-on-drop memory primitives               ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 
 /// A secure buffer that is zeroed on drop and optionally mlock'd
 /// to prevent swapping to disk

@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 use crate::error::GhostError;
-use crate::crypto::cipher::{CipherContext, CipherError};
+use crate::crypto::cipher::CipherContext;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;

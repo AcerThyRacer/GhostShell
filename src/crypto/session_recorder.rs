@@ -4,14 +4,14 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 use crate::config::{CryptoConfig, GhostConfig};
-use crate::crypto::cipher::{CipherContext, CipherError, EncryptedPacket};
+use crate::crypto::cipher::CipherContext;
 use crate::crypto::keys;
 use crate::crypto::secure_mem::SecureBuffer;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use zeroize::Zeroize;
 
 /// Session recording event types
@@ -220,7 +220,7 @@ impl SessionRecorder {
 }
 
 /// Play back a recording file
-pub fn play_recording(path: &str, speed: f64) -> Result<(), Box<dyn std::error::Error>> {
+pub fn play_recording(path: &str, _speed: f64) -> Result<(), Box<dyn std::error::Error>> {
     let data = std::fs::read(path)?;
 
     if data.len() < 4 {

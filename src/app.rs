@@ -7,7 +7,7 @@ use crate::config::GhostConfig;
 use crate::crypto::clipboard::SecureClipboard;
 use crate::crypto::session_recorder::SessionRecorder;
 use crate::decoy::DecoySystem;
-use crate::ids::alerts::{AlertAction, AlertQueue};
+use crate::ids::alerts::AlertQueue;
 use crate::ids::IdsEngine;
 use crate::stealth::dead_man::DeadManSwitch;
 use crate::stealth::scrollback::SecureScrollback;
@@ -248,7 +248,7 @@ impl GhostApp {
     }
 
     /// Attempt authentication
-    pub fn authenticate(&mut self, password: &str) -> bool {
+    pub fn authenticate(&mut self, _password: &str) -> bool {
         // SECURITY: Use the proper DuressAuth system which derives the
         // duress password from the primary password at runtime (never
         // stored in config). Both primary and duress comparisons are

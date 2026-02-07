@@ -3,7 +3,6 @@
 // ║         Share terminal sessions with E2E encryption              ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
-use crate::network::noise_transport::NoiseTransport;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

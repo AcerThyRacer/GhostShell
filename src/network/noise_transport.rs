@@ -4,8 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 use snow::{Builder, TransportState};
-use std::io::{self, Read, Write};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::io::{self};
 use tokio::net::{TcpListener, TcpStream};
 
 /// Noise protocol pattern (XX for mutual authentication)

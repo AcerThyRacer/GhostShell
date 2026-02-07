@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 use crate::config::CryptoConfig;
-use crate::crypto::keys::{generate_master_key, generate_salt, derive_key_argon2id, MASTER_KEY_SIZE, SALT_SIZE};
+use crate::crypto::keys::{generate_salt, derive_key_argon2id, SALT_SIZE};
 use crate::crypto::secure_mem::SecureBuffer;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

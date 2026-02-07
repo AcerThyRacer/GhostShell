@@ -6,7 +6,6 @@
 use crate::config::CryptoConfig;
 use crate::crypto::secure_mem::SecureBuffer;
 use argon2::{
-    password_hash::{PasswordHasher, SaltString},
     Argon2, Params, Version,
 };
 use rand::RngCore;

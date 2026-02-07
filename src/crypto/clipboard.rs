@@ -5,7 +5,6 @@
 
 use crate::crypto::secure_mem::SecureBuffer;
 use std::time::{Duration, Instant};
-use zeroize::Zeroize;
 
 // ── Content Classification ───────────────────────────────────────
 

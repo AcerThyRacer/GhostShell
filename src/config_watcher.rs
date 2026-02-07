@@ -31,7 +31,7 @@ impl ConfigWatcher {
     /// Debounces rapid modifications (500ms window).
     pub fn start(config_path: PathBuf) -> Result<(Self, mpsc::Receiver<ConfigEvent>), GhostError> {
         let (tx, rx) = mpsc::channel::<ConfigEvent>(16);
-        let watch_path = config_path.clone();
+        let _watch_path = config_path.clone();
 
         // Use std::sync::mpsc for the notify callback (must be Sync)
         let (notify_tx, notify_rx) = std_mpsc::channel::<()>();

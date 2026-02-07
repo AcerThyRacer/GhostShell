@@ -191,7 +191,7 @@ pub fn detect_monitoring() -> Vec<MonitoringIndicator> {
     #[cfg(windows)]
     {
         // Check for common Windows monitoring processes
-        let suspicious = ["wireshark", "procmon", "procexp", "fiddler", "x64dbg", "ollydbg"];
+        let _suspicious = ["wireshark", "procmon", "procexp", "fiddler", "x64dbg", "ollydbg"];
         // In a real implementation, we'd enumerate processes via CreateToolhelp32Snapshot
         // For now, check environment hints
         if std::env::var("PROCESSOR_IDENTIFIER").is_ok() {

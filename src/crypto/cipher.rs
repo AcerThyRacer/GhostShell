@@ -8,7 +8,6 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
 };
 use rand;
-use zeroize::Zeroize;
 
 /// AEAD tag size (Poly1305)
 pub const TAG_SIZE: usize = 16;
