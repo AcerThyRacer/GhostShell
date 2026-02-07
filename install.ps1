@@ -272,60 +272,22 @@ function Get-Repository {
 function Build-GhostShell {
     Write-Step "Building GhostShell (Release Mode)"
     Write-Info "This may take 2-5 minutes on first build..."
-    Write-Info "[debug] Build function v2 — Start-Process isolation"
 
     Push-Location $Script:SourceDir
+    Write-Info "[debug] Building in: $(Get-Location)"
 
-    # Use Start-Process to completely isolate cargo's stderr from PowerShell.
-    # PS 5.1 converts stderr to ErrorRecord objects which throw NativeCommandError
-    # when $ErrorActionPreference = "Stop". By using Start-Process with file-based
-    # redirection, stderr NEVER touches PowerShell's pipeline.
-    $buildLog = "$env:TEMP\ghostshell-build-stderr.log"
-    $buildStdout = "$env:TEMP\ghostshell-build-stdout.log"
-    Remove-Item $buildLog, $buildStdout -ErrorAction SilentlyContinue
-
-    $proc = Start-Process -FilePath "cargo" `
-        -ArgumentList "build", "--release" `
-        -WorkingDirectory (Get-Location).Path `
-        -NoNewWindow -PassThru `
-        -RedirectStandardError $buildLog `
-        -RedirectStandardOutput $buildStdout
-
-    # Poll the build log for real-time progress
-    $lastCrate = ""
-    while (-not $proc.HasExited) {
-        Start-Sleep -Milliseconds 500
-        if (Test-Path $buildLog) {
-            $tail = Get-Content $buildLog -Tail 5 -ErrorAction SilentlyContinue
-            foreach ($line in $tail) {
-                if ($line -match 'Compiling (.+?) v' -and $Matches[1] -ne $lastCrate) {
-                    $lastCrate = $Matches[1]
-                    Write-Host "`r$($C.Dim)  │ $($C.Ghost)⚙$($C.Dim) Compiling $lastCrate$($C.Reset)              " -NoNewline
-                }
-            }
-        }
-    }
-    $proc.WaitForExit()
-    $buildResult = $proc.ExitCode
-    Write-Host ""
-
-    # Show errors if build failed
-    if ($buildResult -ne 0 -and (Test-Path $buildLog)) {
-        Write-Host ""
-        Get-Content $buildLog | ForEach-Object {
-            if ($_ -match '^error') {
-                Write-Host "$($C.Red)  │ $_$($C.Reset)"
-            }
-        }
-    }
-
-    # Cleanup temp files
-    Remove-Item $buildLog, $buildStdout -ErrorAction SilentlyContinue
+    # Run cargo directly — WITHOUT 2>&1 redirection.
+    # Without 2>&1, stderr goes straight to the console host and never
+    # touches PowerShell's pipeline/error handling. This avoids the
+    # NativeCommandError issue in PS 5.1 entirely.
+    # Cargo's own colored output will display naturally.
+    & cargo build --release
+    $buildResult = $LASTEXITCODE
 
     Pop-Location
 
     if ($buildResult -ne 0) {
-        Write-Fail "Build failed (exit code: $buildResult). Check errors above."
+        Write-Fail "Build failed (exit code: $buildResult). Check cargo errors above."
     }
 
     $builtBinary = "$Script:SourceDir\target\release\$Script:BinaryName"
