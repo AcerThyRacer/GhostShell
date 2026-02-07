@@ -122,7 +122,9 @@ function Write-Step {
     $barLen = 30
     $filled = [math]::Floor($pct / 100 * $barLen)
     $empty = $barLen - $filled
-    $bar = "$($C.PSCyan)$([char]0x2588 * $filled)$($C.VDim)$([char]0x2591 * $empty)"
+    $barFill = [string]::new([char]0x2588, $filled)
+    $barEmpty = [string]::new([char]0x2591, $empty)
+    $bar = "$($C.PSCyan)$barFill$($C.VDim)$barEmpty"
 
     Write-Host ""
     Write-Host "  $($C.PSBlue)$($C.Bold)[$Script:StepsDone/$Script:TotalSteps]$($C.Reset) $($C.White)$($C.Bold)$Msg$($C.Reset)"
@@ -228,10 +230,10 @@ function Show-Splash {
     }
 
     Write-Host ""
-    Write-Centered "$([char]0x2550 * 52)" $C.Dim
+    Write-Centered ([string]::new([char]0x2550, 52)) $C.Dim
     Write-Centered "Stealth Terminal Multiplexer  $($C.Dim)|  Windows Installer" "$($C.White)$($C.Bold)"
     Write-Centered "v$Script:AppVersion  $($C.Dim)|  by $Script:AppPublisher" $C.Dim
-    Write-Centered "$([char]0x2550 * 52)" $C.Dim
+    Write-Centered ([string]::new([char]0x2550, 52)) $C.Dim
     Write-Host ""
 
     # Feature cards
@@ -863,8 +865,8 @@ function Show-Summary {
     Show-FogBlock -Lines 1
 
     Write-Host ""
-    $line = [char]0x2550 * 56
-    Write-Centered "$line" $C.PSCyan
+    $line = [string]::new([char]0x2550, 56)
+    Write-Centered $line $C.PSCyan
     Write-Host ""
     Write-Centered "$($C.Green)$($C.Bold)GhostShell v$Script:AppVersion installed successfully!$($C.Reset)"
     Write-Host ""
