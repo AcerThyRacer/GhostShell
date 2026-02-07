@@ -623,75 +623,120 @@ function Add-TerminalProfile {
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json"
     )
 
-    $profileGuid = "{7f3b2d85-a09c-4e47-b834-gh0st5hell01}"
-    $profileObj = @{
-        guid              = $profileGuid
-        name              = "GhostShell"
-        commandline       = "$Script:BinDir\$Script:BinaryName"
-        icon              = $IconPath
-        startingDirectory = "%USERPROFILE%"
-        colorScheme       = "GhostShell"
-        useAcrylic        = $true
-        opacity           = 85
-        font              = @{ face = "Cascadia Code"; size = 11 }
-        hidden            = $false
-    }
-    $schemeObj = @{
-        name                = "GhostShell"
-        background          = "#0C0C16"
-        foreground          = "#B4BEC8"
-        cursorColor         = "#50C8FF"
-        black               = "#1A1A2E"
-        red                 = "#F0505A"
-        green               = "#3CDC8C"
-        yellow              = "#F0C850"
-        blue                = "#3884F4"
-        purple              = "#A078F0"
-        cyan                = "#56C4F0"
-        white               = "#DCE0F0"
-        brightBlack         = "#3C3C55"
-        brightRed           = "#FF6680"
-        brightGreen         = "#66FFB2"
-        brightYellow        = "#FFD880"
-        brightBlue          = "#80DCFF"
-        brightPurple        = "#C89CFF"
-        brightCyan          = "#80DCFF"
-        brightWhite         = "#FFFFFF"
-        selectionBackground = "#2A3A5A"
-    }
+    # Valid hex-only GUID
+    $profileGuid = "{7f3b2d85-a09c-4e47-b834-0a057c5be101}"
+
+    # Prepare escaped paths for JSON
+    $binPath = ("$Script:BinDir\$Script:BinaryName") -replace '\\', '\\'
+    $icoPath = $IconPath -replace '\\', '\\'
+
+    $profileFragment = @"
+                {
+                    "guid": "$profileGuid",
+                    "name": "GhostShell",
+                    "commandline": "$binPath",
+                    "icon": "$icoPath",
+                    "startingDirectory": "%USERPROFILE%",
+                    "colorScheme": "GhostShell",
+                    "useAcrylic": true,
+                    "opacity": 85,
+                    "font": { "face": "Cascadia Code", "size": 11 },
+                    "hidden": false
+                }
+"@
+
+    $schemeFragment = @"
+        {
+            "name": "GhostShell",
+            "background": "#0C0C16",
+            "foreground": "#B4BEC8",
+            "cursorColor": "#50C8FF",
+            "black": "#1A1A2E",
+            "red": "#F0505A",
+            "green": "#3CDC8C",
+            "yellow": "#F0C850",
+            "blue": "#3884F4",
+            "purple": "#A078F0",
+            "cyan": "#56C4F0",
+            "white": "#DCE0F0",
+            "brightBlack": "#3C3C55",
+            "brightRed": "#FF6680",
+            "brightGreen": "#66FFB2",
+            "brightYellow": "#FFD880",
+            "brightBlue": "#80DCFF",
+            "brightPurple": "#C89CFF",
+            "brightCyan": "#80DCFF",
+            "brightWhite": "#FFFFFF",
+            "selectionBackground": "#2A3A5A"
+        }
+"@
 
     foreach ($settingsFile in $wtPaths) {
         if (-not (Test-Path $settingsFile)) { continue }
         try {
-            $raw = Get-Content $settingsFile -Raw
-            $clean = $raw -replace '(?m)^\s*//.*$', '' -replace ',(\s*[}\]])', '$1'
-            $json = $clean | ConvertFrom-Json
+            # Back up settings first
+            Copy-Item $settingsFile "$settingsFile.ghostshell.bak" -Force
 
-            if (-not ($json.schemes | Where-Object { $_.name -eq "GhostShell" })) {
-                $json.schemes += [PSCustomObject]$schemeObj
+            $raw = [System.IO.File]::ReadAllText($settingsFile)
+
+            # Skip if already injected with valid GUID
+            if ($raw -match [regex]::Escape($profileGuid)) {
+                Write-Info "Windows Terminal profile already exists"
+                return
             }
 
-            $profiles = $json.profiles
-            $list = if ($profiles.list) { $profiles.list } else { $profiles }
-            if (-not ($list | Where-Object { $_.guid -eq $profileGuid })) {
-                if ($profiles.list) {
-                    $json.profiles.list += [PSCustomObject]$profileObj
-                }
-                else {
-                    $json.profiles += [PSCustomObject]$profileObj
-                }
+            # Inject scheme if not present
+            if ($raw -notmatch '"name"\s*:\s*"GhostShell"') {
+                # Insert scheme before the last ] in "schemes": [...]
+                # Find the last entry in schemes array and add comma + new entry
+                $raw = $raw -replace '("schemes"\s*:\s*\[[\s\S]*?)(\]\s*,)', "`$1,$schemeFragment`$2"
             }
 
-            $json | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
+            # Inject profile into list array
+            # Find the last } in the profiles list and append
+            $lines = $raw -split "`n"
+            $output = New-Object System.Collections.ArrayList
+            $inList = $false
+            $lastBrace = -1
+            $listDepth = 0
+
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                $line = $lines[$i]
+                if ($line -match '"list"\s*:') { $inList = $true }
+                if ($inList) {
+                    $listDepth += ([regex]::Matches($line, '\[')).Count
+                    $listDepth -= ([regex]::Matches($line, '\]')).Count
+                    if ($line -match '\}') { $lastBrace = $i }
+                    if ($listDepth -le 0 -and $inList -and $line -match '\]') {
+                        # Insert profile before this closing ]
+                        if ($lastBrace -ge 0) {
+                            $output[$lastBrace] = $output[$lastBrace].ToString().TrimEnd() + ","
+                        }
+                        $null = $output.Add($profileFragment)
+                        $inList = $false
+                    }
+                }
+                $null = $output.Add($line)
+            }
+
+            $result = $output -join "`n"
+            [System.IO.File]::WriteAllText($settingsFile, $result, [System.Text.UTF8Encoding]::new($false))
             Write-Ok "Windows Terminal profile injected"
             return
         }
         catch {
+            # Restore backup
+            $backup = "$settingsFile.ghostshell.bak"
+            if (Test-Path $backup) {
+                Copy-Item $backup $settingsFile -Force
+                Remove-Item $backup -Force -ErrorAction SilentlyContinue
+            }
             Write-Warn "Could not update Windows Terminal: $_"
         }
     }
     Write-Info "Windows Terminal not found (skipped)"
 }
+
 
 # ============================================================================
 #  APP ICON GENERATOR
