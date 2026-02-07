@@ -7,46 +7,47 @@
 
 #Requires -Version 5.1
 $ErrorActionPreference = "Stop"
-$ProgressPreference    = "SilentlyContinue"
+$ProgressPreference = "SilentlyContinue"
 
 # ─── Paths & Constants ────────────────────────────────────────────────
-$Script:AppName        = "GhostShell"
-$Script:AppVersion     = "0.1.0"
-$Script:AppPublisher   = "AcerThyRacer"
-$Script:Repo           = "https://github.com/AcerThyRacer/GhostShell.git"
-$Script:InstallRoot    = "$env:LOCALAPPDATA\GhostShell"
-$Script:BinDir         = "$Script:InstallRoot\bin"
-$Script:SourceDir      = "$Script:InstallRoot\source"
-$Script:DataDir        = "$Script:InstallRoot\data"
-$Script:ConfigDir      = "$env:APPDATA\GhostShell\config"
-$Script:PluginsDir     = "$Script:InstallRoot\plugins"
-$Script:BinaryName     = "ghostshell.exe"
-$Script:UninstallReg   = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GhostShell"
-$Script:StepsDone      = 0
-$Script:TotalSteps     = 9
+$Script:AppName = "GhostShell"
+$Script:AppVersion = "0.1.0"
+$Script:AppPublisher = "AcerThyRacer"
+$Script:Repo = "https://github.com/AcerThyRacer/GhostShell.git"
+$Script:InstallRoot = "$env:LOCALAPPDATA\GhostShell"
+$Script:BinDir = "$Script:InstallRoot\bin"
+$Script:SourceDir = "$Script:InstallRoot\source"
+$Script:DataDir = "$Script:InstallRoot\data"
+$Script:ConfigDir = "$env:APPDATA\GhostShell\config"
+$Script:PluginsDir = "$Script:InstallRoot\plugins"
+$Script:BinaryName = "ghostshell.exe"
+$Script:UninstallReg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GhostShell"
+$Script:StepsDone = 0
+$Script:TotalSteps = 9
 
 # ─── Color Palette ────────────────────────────────────────────────────
 $Script:C = @{
-    Ghost   = "`e[38;2;80;200;255m"
-    Green   = "`e[38;2;0;255;160m"
-    Red     = "`e[38;2;255;60;80m"
-    Yellow  = "`e[38;2;255;200;80m"
-    Purple  = "`e[38;2;180;120;255m"
-    Dim     = "`e[38;2;90;90;120m"
-    White   = "`e[38;2;220;220;240m"
-    BgDark  = "`e[48;2;10;10;18m"
-    Bold    = "`e[1m"
-    Reset   = "`e[0m"
+    Ghost  = "`e[38;2;80;200;255m"
+    Green  = "`e[38;2;0;255;160m"
+    Red    = "`e[38;2;255;60;80m"
+    Yellow = "`e[38;2;255;200;80m"
+    Purple = "`e[38;2;180;120;255m"
+    Dim    = "`e[38;2;90;90;120m"
+    White  = "`e[38;2;220;220;240m"
+    BgDark = "`e[48;2;10;10;18m"
+    Bold   = "`e[1m"
+    Reset  = "`e[0m"
 }
 
 # ─── Helper Functions ─────────────────────────────────────────────────
 
-function Write-Ghost  { param($Msg) Write-Host "$($C.Ghost)  👻 $Msg$($C.Reset)" }
-function Write-Ok     { param($Msg) Write-Host "$($C.Green)  ✓ $Msg$($C.Reset)" }
-function Write-Warn   { param($Msg) Write-Host "$($C.Yellow)  ⚠ $Msg$($C.Reset)" }
-function Write-Fail   { param($Msg) Write-Host "$($C.Red)  ✗ $Msg$($C.Reset)"; exit 1 }
-function Write-Info   { param($Msg) Write-Host "$($C.Dim)  │ $Msg$($C.Reset)" }
-function Write-Step   { param($Msg)
+function Write-Ghost { param($Msg) Write-Host "$($C.Ghost)  👻 $Msg$($C.Reset)" }
+function Write-Ok { param($Msg) Write-Host "$($C.Green)  ✓ $Msg$($C.Reset)" }
+function Write-Warn { param($Msg) Write-Host "$($C.Yellow)  ⚠ $Msg$($C.Reset)" }
+function Write-Fail { param($Msg) Write-Host "$($C.Red)  ✗ $Msg$($C.Reset)"; exit 1 }
+function Write-Info { param($Msg) Write-Host "$($C.Dim)  │ $Msg$($C.Reset)" }
+function Write-Step {
+    param($Msg)
     $Script:StepsDone++
     $pct = [math]::Round(($Script:StepsDone / $Script:TotalSteps) * 100)
     $bar = ("█" * [math]::Floor($pct / 5)).PadRight(20, "░")
@@ -55,14 +56,16 @@ function Write-Step   { param($Msg)
     Write-Host "$($C.Dim)  │ $($C.Ghost)$bar$($C.Dim) $pct%$($C.Reset)"
 }
 
-function Write-Section { param($Msg)
+function Write-Section {
+    param($Msg)
     $line = "─" * 58
     Write-Host "$($C.Dim)  ┌$line┐$($C.Reset)"
     Write-Host "$($C.Dim)  │ $($C.Ghost)$($C.Bold)$Msg$($C.Reset)$($C.Dim)$(' ' * (57 - $Msg.Length))│$($C.Reset)"
     Write-Host "$($C.Dim)  └$line┘$($C.Reset)"
 }
 
-function Test-CommandExists { param($Cmd)
+function Test-CommandExists {
+    param($Cmd)
     $null -ne (Get-Command $Cmd -ErrorAction SilentlyContinue)
 }
 
@@ -71,10 +74,10 @@ function New-Shortcut {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($ShortcutPath)
     $shortcut.TargetPath = $TargetPath
-    if ($Arguments)  { $shortcut.Arguments = $Arguments }
-    if ($IconPath)   { $shortcut.IconLocation = $IconPath }
+    if ($Arguments) { $shortcut.Arguments = $Arguments }
+    if ($IconPath) { $shortcut.IconLocation = $IconPath }
     if ($WorkingDir) { $shortcut.WorkingDirectory = $WorkingDir }
-    if ($Description){ $shortcut.Description = $Description }
+    if ($Description) { $shortcut.Description = $Description }
     $shortcut.WindowStyle = 1
     $shortcut.Save()
     [System.Runtime.Interopservices.Marshal]::ReleaseComObject($shell) | Out-Null
@@ -136,9 +139,11 @@ function Test-SystemRequirements {
     $build = [int](Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue).CurrentBuildNumber
     if ($build -ge 22000) {
         Write-Ok "Windows 11 (Build $build)"
-    } elseif ($build -ge 10240) {
+    }
+    elseif ($build -ge 10240) {
         Write-Ok "Windows 10 (Build $build)"
-    } else {
+    }
+    else {
         Write-Warn "Windows version may not be fully supported (Build $build)"
     }
 
@@ -148,7 +153,7 @@ function Test-SystemRequirements {
 
     # Disk space
     $drive = (Split-Path $env:LOCALAPPDATA -Qualifier)
-    $freeGB = [math]::Round((Get-PSDrive ($drive -replace ':','') | Select-Object -ExpandProperty Free) / 1GB, 1)
+    $freeGB = [math]::Round((Get-PSDrive ($drive -replace ':', '') | Select-Object -ExpandProperty Free) / 1GB, 1)
     if ($freeGB -lt 2) {
         Write-Fail "Insufficient disk space: ${freeGB}GB free (need at least 2GB)"
     }
@@ -164,9 +169,10 @@ function Install-Prerequisites {
 
     # ── Git ──
     if (Test-CommandExists "git") {
-        $gitVer = (git --version 2>&1) -replace 'git version ',''
+        $gitVer = (git --version 2>&1) -replace 'git version ', ''
         Write-Ok "Git $gitVer"
-    } else {
+    }
+    else {
         Write-Warn "Git not found"
         Write-Info "Installing Git via winget..."
         try {
@@ -174,10 +180,12 @@ function Install-Prerequisites {
             $env:PATH = "$env:ProgramFiles\Git\cmd;$env:PATH"
             if (Test-CommandExists "git") {
                 Write-Ok "Git installed successfully"
-            } else {
+            }
+            else {
                 Write-Fail "Git installation failed. Please install from https://git-scm.com"
             }
-        } catch {
+        }
+        catch {
             Write-Fail "Git installation failed. Please install from https://git-scm.com"
         }
     }
@@ -189,9 +197,10 @@ function Install-Prerequisites {
     }
 
     if (Test-CommandExists "cargo") {
-        $rustVer = (rustc --version 2>&1) -replace 'rustc ',''
+        $rustVer = (rustc --version 2>&1) -replace 'rustc ', ''
         Write-Ok "Rust $rustVer"
-    } else {
+    }
+    else {
         Write-Warn "Rust toolchain not found"
         Write-Info "Installing Rust via rustup..."
         $RustupInit = "$env:TEMP\rustup-init.exe"
@@ -202,26 +211,30 @@ function Install-Prerequisites {
             $env:PATH = "$CargoBin;$env:PATH"
             if (Test-CommandExists "cargo") {
                 Write-Ok "Rust installed successfully"
-            } else {
+            }
+            else {
                 Write-Fail "Rust installation failed. Visit https://rustup.rs"
             }
-        } catch {
+        }
+        catch {
             Write-Fail "Rust installation failed: $_"
         }
     }
 
     # ── C/C++ Compiler (MSVC check) ──
     $hasCC = $null -ne (Get-Command "cl.exe" -ErrorAction SilentlyContinue) -or
-             (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe")
+    (Test-Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe")
     if ($hasCC) {
         Write-Ok "C/C++ compiler (MSVC) detected"
-    } else {
+    }
+    else {
         Write-Warn "Visual Studio Build Tools not detected"
         Write-Info "Installing VS Build Tools (this may take several minutes)..."
         try {
             winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-source-agreements --accept-package-agreements --silent --override "--add Microsoft.VisualStudio.Workload.VCTools --quiet --wait" 2>&1 | Out-Null
             Write-Ok "VS Build Tools installed"
-        } catch {
+        }
+        catch {
             Write-Warn "Auto-install failed — Rust may still compile via gnu toolchain"
             Write-Info "If the build fails, install VS Build Tools from https://visualstudio.microsoft.com/visual-cpp-build-tools/"
         }
@@ -238,7 +251,8 @@ function Get-Repository {
         & git pull --quiet 2>&1 | Out-Null
         Pop-Location
         Write-Ok "Source code updated"
-    } else {
+    }
+    else {
         if (Test-Path $Script:SourceDir) {
             Remove-Item -Recurse -Force $Script:SourceDir -ErrorAction SilentlyContinue
         }
@@ -257,11 +271,25 @@ function Build-GhostShell {
     Write-Info "This may take 2-5 minutes on first build..."
 
     Push-Location $Script:SourceDir
-    & cargo build --release 2>&1 | ForEach-Object {
-        if ($_ -match 'Compiling (.+?) v') {
-            Write-Host "$($C.Dim)  │ $($C.Ghost)⚙$($C.Dim) Compiling $($Matches[1])$($C.Reset)" -NoNewline
-            Write-Host "`r" -NoNewline
+
+    # Use cmd /c to prevent PowerShell from wrapping stderr lines as ErrorRecord
+    # objects which causes NativeCommandError. Cargo writes progress to stderr.
+    $oldEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        cmd /c "cargo build --release 2>&1" | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -match 'Compiling (.+?) v') {
+                Write-Host "$($C.Dim)  │ $($C.Ghost)⚙$($C.Dim) Compiling $($Matches[1])$($C.Reset)" -NoNewline
+                Write-Host "`r" -NoNewline
+            }
+            elseif ($line -match '^error') {
+                Write-Host "$($C.Red)  │ $line$($C.Reset)"
+            }
         }
+    }
+    finally {
+        $ErrorActionPreference = $oldEAP
     }
     $buildResult = $LASTEXITCODE
     Pop-Location
@@ -299,11 +327,12 @@ function Install-Application {
 
     # Copy default config if not already present
     $defaultConfig = "$Script:SourceDir\config\default.toml"
-    $targetConfig  = "$Script:ConfigDir\default.toml"
+    $targetConfig = "$Script:ConfigDir\default.toml"
     if ((Test-Path $defaultConfig) -and -not (Test-Path $targetConfig)) {
         Copy-Item $defaultConfig $targetConfig -Force
         Write-Ok "Default configuration installed"
-    } elseif (Test-Path $targetConfig) {
+    }
+    elseif (Test-Path $targetConfig) {
         Write-Info "Existing configuration preserved"
     }
 
@@ -313,7 +342,8 @@ function Install-Application {
         [Environment]::SetEnvironmentVariable("Path", "$($Script:BinDir);$UserPath", "User")
         $env:PATH = "$($Script:BinDir);$env:PATH"
         Write-Ok "Added to user PATH"
-    } else {
+    }
+    else {
         Write-Info "Already on PATH"
     }
 }
@@ -331,11 +361,11 @@ function Register-WindowsApp {
     $startMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
     $shortcutPath = "$startMenu\GhostShell.lnk"
     New-Shortcut -ShortcutPath $shortcutPath `
-                 -TargetPath "pwsh.exe" `
-                 -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$Script:InstallRoot\ghostshell-launcher.ps1`"" `
-                 -IconPath $iconPath `
-                 -WorkingDir $env:USERPROFILE `
-                 -Description "GhostShell — Stealth Terminal Multiplexer"
+        -TargetPath "pwsh.exe" `
+        -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$Script:InstallRoot\ghostshell-launcher.ps1`"" `
+        -IconPath $iconPath `
+        -WorkingDir $env:USERPROFILE `
+        -Description "GhostShell — Stealth Terminal Multiplexer"
     Write-Ok "Start Menu shortcut created"
 
     # ── Desktop Shortcut (prompt) ──
@@ -345,11 +375,11 @@ function Register-WindowsApp {
     if ($desktopChoice -ne "n" -and $desktopChoice -ne "N") {
         $desktopShortcut = "$env:USERPROFILE\Desktop\GhostShell.lnk"
         New-Shortcut -ShortcutPath $desktopShortcut `
-                     -TargetPath "pwsh.exe" `
-                     -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$Script:InstallRoot\ghostshell-launcher.ps1`"" `
-                     -IconPath $iconPath `
-                     -WorkingDir $env:USERPROFILE `
-                     -Description "GhostShell — Stealth Terminal Multiplexer"
+            -TargetPath "pwsh.exe" `
+            -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$Script:InstallRoot\ghostshell-launcher.ps1`"" `
+            -IconPath $iconPath `
+            -WorkingDir $env:USERPROFILE `
+            -Description "GhostShell — Stealth Terminal Multiplexer"
         Write-Ok "Desktop shortcut created"
     }
 
@@ -379,7 +409,7 @@ function Register-WindowsApp {
     # ── .ghost File Association ──
     $ghostExt = "HKCU:\Software\Classes\.ghost"
     $ghostProg = "HKCU:\Software\Classes\GhostShell.Recording"
-    $ghostCmd  = "HKCU:\Software\Classes\GhostShell.Recording\shell\open\command"
+    $ghostCmd = "HKCU:\Software\Classes\GhostShell.Recording\shell\open\command"
     $ghostIcon = "HKCU:\Software\Classes\GhostShell.Recording\DefaultIcon"
 
     New-Item -Path $ghostExt -Force | Out-Null
@@ -411,42 +441,42 @@ function Inject-WindowsTerminalProfile {
     param($IconPath)
 
     $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-    $wtPreview  = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json"
+    $wtPreview = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json"
 
     $profileGuid = "{7f3b2d85-a09c-4e47-b834-gh0st5hell01}"
     $profileObj = @{
-        guid             = $profileGuid
-        name             = "👻 GhostShell"
-        commandline      = "$Script:BinDir\$Script:BinaryName"
-        icon             = $IconPath
+        guid              = $profileGuid
+        name              = "👻 GhostShell"
+        commandline       = "$Script:BinDir\$Script:BinaryName"
+        icon              = $IconPath
         startingDirectory = "%USERPROFILE%"
-        colorScheme      = "GhostShell"
-        useAcrylic       = $true
-        opacity          = 85
-        font             = @{ face = "Cascadia Code"; size = 11 }
-        hidden           = $false
+        colorScheme       = "GhostShell"
+        useAcrylic        = $true
+        opacity           = 85
+        font              = @{ face = "Cascadia Code"; size = 11 }
+        hidden            = $false
     }
     $schemeObj = @{
-        name        = "GhostShell"
-        background  = "#0A0A12"
-        foreground  = "#B4BEC8"
-        cursorColor = "#50C8FF"
-        black       = "#1A1A2E"
-        red         = "#FF3C50"
-        green       = "#00FFA0"
-        yellow      = "#FFC850"
-        blue        = "#50C8FF"
-        purple      = "#B478FF"
-        cyan        = "#50C8FF"
-        white       = "#DCE0F0"
-        brightBlack   = "#3C3C55"
-        brightRed     = "#FF6680"
-        brightGreen   = "#66FFB2"
-        brightYellow  = "#FFD880"
-        brightBlue    = "#80DCFF"
-        brightPurple  = "#C89CFF"
-        brightCyan    = "#80DCFF"
-        brightWhite   = "#FFFFFF"
+        name                = "GhostShell"
+        background          = "#0A0A12"
+        foreground          = "#B4BEC8"
+        cursorColor         = "#50C8FF"
+        black               = "#1A1A2E"
+        red                 = "#FF3C50"
+        green               = "#00FFA0"
+        yellow              = "#FFC850"
+        blue                = "#50C8FF"
+        purple              = "#B478FF"
+        cyan                = "#50C8FF"
+        white               = "#DCE0F0"
+        brightBlack         = "#3C3C55"
+        brightRed           = "#FF6680"
+        brightGreen         = "#66FFB2"
+        brightYellow        = "#FFD880"
+        brightBlue          = "#80DCFF"
+        brightPurple        = "#C89CFF"
+        brightCyan          = "#80DCFF"
+        brightWhite         = "#FFFFFF"
         selectionBackground = "#2A3A5A"
     }
 
@@ -455,7 +485,7 @@ function Inject-WindowsTerminalProfile {
         try {
             $raw = Get-Content $settingsFile -Raw
             # Strip single-line comments for JSON parsing
-            $clean = $raw -replace '(?m)^\s*//.*$','' -replace ',(\s*[}\]])', '$1'
+            $clean = $raw -replace '(?m)^\s*//.*$', '' -replace ',(\s*[}\]])', '$1'
             $json = $clean | ConvertFrom-Json
 
             # Add color scheme if missing
@@ -469,7 +499,8 @@ function Inject-WindowsTerminalProfile {
             if (-not ($list | Where-Object { $_.guid -eq $profileGuid })) {
                 if ($profiles.list) {
                     $json.profiles.list += [PSCustomObject]$profileObj
-                } else {
+                }
+                else {
                     $json.profiles += [PSCustomObject]$profileObj
                 }
             }
@@ -477,7 +508,8 @@ function Inject-WindowsTerminalProfile {
             $json | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
             Write-Ok "Windows Terminal profile injected"
             return
-        } catch {
+        }
+        catch {
             Write-Warn "Could not update Windows Terminal settings: $_"
         }
     }
@@ -527,25 +559,26 @@ function Generate-AppIcon {
         $bmp.Dispose()
 
         # ICO format: header + directory entry + PNG data
-        $icoHeader = [byte[]]@(0,0, 1,0, 1,0)  # reserved, type=icon, count=1
+        $icoHeader = [byte[]]@(0, 0, 1, 0, 1, 0)  # reserved, type=icon, count=1
         $dirEntry = [byte[]]@(
             32,  # width
             32,  # height
             0,   # color palette
             0,   # reserved
-            1,0, # color planes
-            32,0 # bits per pixel
+            1, 0, # color planes
+            32, 0 # bits per pixel
         )
         $sizeBytes = [BitConverter]::GetBytes([int]$pngBytes.Length)
         $offsetBytes = [BitConverter]::GetBytes([int](6 + 16))  # header(6) + dir(16)
 
         $ico = $icoHeader + $dirEntry + $sizeBytes + $offsetBytes + $pngBytes
         [System.IO.File]::WriteAllBytes($OutPath, $ico)
-    } catch {
+    }
+    catch {
         # Fallback: create a simple placeholder
         Write-Info "Icon generation fallback (System.Drawing unavailable)"
         # Write minimal valid .ico
-        $minIco = [byte[]]@(0,0,1,0,1,0,1,1,0,0,1,0,24,0,40,0,0,0,22,0,0,0,1,0,1,0,0,0,1,0,24,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,80,200,255,0,0,0,0,0)
+        $minIco = [byte[]]@(0, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 24, 0, 40, 0, 0, 0, 22, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 24, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 80, 200, 255, 0, 0, 0, 0, 0)
         [System.IO.File]::WriteAllBytes($OutPath, $minIco)
     }
 }
