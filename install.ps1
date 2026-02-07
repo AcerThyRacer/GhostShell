@@ -20,6 +20,12 @@ Write-Host "  ========================" -ForegroundColor Magenta
 Write-Host ""
 
 # ── Check for Rust toolchain ──────────────────────────────────
+# Ensure .cargo\bin is on PATH for this session (rustup doesn't always persist it)
+$CargoBin = "$env:USERPROFILE\.cargo\bin"
+if ($env:PATH -notlike "*$CargoBin*") {
+    $env:PATH = "$CargoBin;$env:PATH"
+}
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Warn "Rust toolchain not found."
     Write-Info "Installing Rust via rustup..."
@@ -30,8 +36,14 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Remove-Item $RustupInit -ErrorAction SilentlyContinue
 
     # Refresh PATH
-    $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+    $env:PATH = "$CargoBin;$env:PATH"
+
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Write-Fail "Rust installation failed. Please install manually from https://rustup.rs"
+    }
     Write-Ok "Rust installed."
+} else {
+    Write-Ok "Rust toolchain found."
 }
 
 # ── Check for Git ─────────────────────────────────────────────
@@ -40,24 +52,40 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 
 # ── Clone or update the repository ────────────────────────────
-if (Test-Path $InstallDir) {
+if (Test-Path "$InstallDir\.git") {
     Write-Info "Updating existing installation..."
     Push-Location $InstallDir
-    git pull --quiet
+    git pull --quiet 2>&1 | Out-Null
     Pop-Location
     Write-Ok "Repository updated."
 } else {
+    if (Test-Path $InstallDir) {
+        Write-Info "Removing incomplete previous install..."
+        Remove-Item -Recurse -Force $InstallDir
+    }
     Write-Info "Cloning GhostShell..."
     git clone --quiet $Repo $InstallDir
+    if (-not $?) { Write-Fail "Failed to clone repository." }
     Write-Ok "Repository cloned."
 }
 
 # ── Build ─────────────────────────────────────────────────────
 Push-Location $InstallDir
 Write-Info "Building GhostShell (release mode)... this may take a few minutes."
-cargo build --release --quiet
+$buildOutput = cargo build --release 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    Write-Host ($buildOutput | Out-String) -ForegroundColor Red
+    Write-Fail "Build failed. See errors above."
+}
 Pop-Location
 Write-Ok "Build complete."
+
+# ── Verify binary was created ─────────────────────────────────
+$BuiltBinary = "$InstallDir\target\release\$BinaryName"
+if (-not (Test-Path $BuiltBinary)) {
+    Write-Fail "Binary not found at $BuiltBinary — build may have failed silently."
+}
 
 # ── Install binary ────────────────────────────────────────────
 if (-not (Test-Path $BinDir)) {
