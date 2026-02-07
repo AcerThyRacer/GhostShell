@@ -1,0 +1,133 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║              GhostShell — Configuration                     ║
+# ║         Stealth Terminal Multiplexer v0.1.0                 ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+[general]
+# Default shell to spawn in new panes
+shell = "pwsh"
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+# Enable stealth mode on startup
+stealth_mode = false
+
+[keybindings]
+# Prefix key for multiplexer commands
+prefix = "Ctrl-g"
+# Split horizontal
+split_horizontal = "Ctrl-g h"
+# Split vertical
+split_vertical = "Ctrl-g v"
+# Navigate panes
+pane_up = "Ctrl-g Up"
+pane_down = "Ctrl-g Down"
+pane_left = "Ctrl-g Left"
+pane_right = "Ctrl-g Right"
+# Close active pane
+close_pane = "Ctrl-g x"
+# Create new tab
+new_tab = "Ctrl-g t"
+# Switch tabs
+next_tab = "Ctrl-g n"
+prev_tab = "Ctrl-g p"
+# Command mode
+command_mode = "Ctrl-g :"
+# Panic key (triple press)
+panic_key = "Ctrl-g Ctrl-g Ctrl-g"
+# Toggle recording
+toggle_record = "Ctrl-g r"
+# Wipe scrollback
+wipe_scrollback = "Ctrl-g w"
+
+[crypto]
+# Key derivation: argon2id parameters
+argon2_memory_kib = 65536
+argon2_iterations = 3
+argon2_parallelism = 4
+# Session recording encryption
+session_encryption = true
+# Encrypted session file extension
+session_extension = ".ghost"
+
+[clipboard]
+# Auto-wipe clipboard after N seconds (0 = disabled)
+auto_wipe_seconds = 30
+# Maximum paste count before self-destruct (0 = unlimited)
+max_paste_count = 5
+# Use system clipboard (DANGEROUS - set false for stealth)
+use_system_clipboard = false
+
+[scrollback]
+# Scrollback buffer size (lines)
+buffer_size = 1000
+# Auto-wipe on pane close
+wipe_on_close = true
+# Secure wipe passes
+wipe_passes = 3
+
+[stealth]
+# Process name cloaking
+process_cloak_enabled = true
+process_cloak_name = "bash"
+# Dead man's switch timeout (seconds, 0 = disabled)
+dead_man_timeout_seconds = 900
+# Dead man's switch action: lock, wipe, exit
+dead_man_action = "lock"
+# Anti-forensics on exit
+clean_on_exit = true
+# Phantom mode (suppress OS traces)
+phantom_mode = false
+
+[decoy]
+# Enable decoy system
+enabled = true
+# Default decoy profile: developer, sysadmin, casual
+default_profile = "developer"
+# Duress password (empty = disabled)
+duress_suffix = "!"
+
+[ids]
+# Intrusion Detection System
+enabled = true
+# Anomaly detection sensitivity (0.0 - 1.0)
+anomaly_threshold = 0.7
+# Behavioral biometrics
+biometrics_enabled = true
+# Typing cadence sample count for profiling
+biometrics_samples = 100
+# Known attack signature matching
+signature_matching = true
+# Exfiltration detection
+exfil_detection = true
+# Privilege escalation monitoring
+privesc_detection = true
+# Alert responses per severity
+# Options: log, notify, lock, wipe, kill
+
+[ids.responses]
+info = "log"
+warn = "notify"
+critical = "lock"
+panic = "wipe"
+
+[network]
+# Encrypted tunneling
+tunnel_enabled = false
+# Listen address for incoming connections
+listen_address = "127.0.0.1:7331"
+# Traffic obfuscation
+obfuscation = true
+# SOCKS5 proxy (empty = disabled)
+socks5_proxy = ""
+
+[theme]
+# Color scheme: ghost, matrix, midnight, stealth, crimson
+scheme = "ghost"
+# Status bar position: top, bottom, hidden
+status_bar = "bottom"
+# Show stealth indicators in status bar
+show_indicators = true
+# Border style: single, double, rounded, thick, none
+border_style = "rounded"
+# Transparency (terminal-dependent)
+transparent = false
