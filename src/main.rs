@@ -3,6 +3,10 @@
 // ║         Async CLI parsing, initialization, and event loop        ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
+// Suppress dead-code warnings for roadmap features not yet wired in
+#![allow(dead_code)]
+
+
 mod app;
 pub mod audit;
 mod config;
