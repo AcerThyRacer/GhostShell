@@ -48,16 +48,31 @@ Unlike traditional multiplexers (tmux, screen), GhostShell treats every session 
 
 ## 🚀 Quick Install
 
+### One-Liner (Windows PowerShell) — Recommended
+
+```powershell
+irm https://raw.githubusercontent.com/AcerThyRacer/GhostShell/main/install.ps1 | iex
+```
+
+The Windows installer provides a **premium app experience**:
+
+| Integration | Description |
+|---|---|
+| 🪟 **Start Menu** | GhostShell shortcut with custom ghost icon |
+| 🖥️ **Desktop Shortcut** | Optional, prompted during install |
+| ⚙️ **Apps & Features** | Appears in Windows Settings → Apps with full uninstaller |
+| 🔤 **PATH Registration** | Run `ghostshell` from any terminal |
+| 📟 **Windows Terminal** | Custom profile with ghost-themed color scheme + acrylic |
+| 📁 **Context Menu** | Right-click → "Open GhostShell Here" in File Explorer |
+| 📎 **File Association** | `.ghost` encrypted recordings open with GhostShell |
+| 🗑️ **Clean Uninstall** | Removes all registry entries, shortcuts, and profiles |
+
+The installer auto-detects and installs prerequisites (Rust, Git, VS Build Tools).
+
 ### One-Liner (Linux/macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AcerThyRacer/GhostShell/main/install.sh | bash
-```
-
-### One-Liner (Windows PowerShell)
-
-```powershell
-irm https://raw.githubusercontent.com/AcerThyRacer/GhostShell/main/install.ps1 | iex
 ```
 
 ### Manual Install
