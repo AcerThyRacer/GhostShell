@@ -6,6 +6,8 @@
 use snow::{Builder, TransportState};
 use std::io::{self};
 use tokio::net::{TcpListener, TcpStream};
+use crate::crypto::secure_mem::SecureBuffer;
+use crate::error::GhostError;
 
 /// Noise protocol pattern (XX for mutual authentication)
 const NOISE_PATTERN: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
@@ -176,11 +178,21 @@ async fn recv_frame(
     Ok(data)
 }
 
-/// Generate a new Noise keypair
-pub fn generate_keypair() -> (Vec<u8>, Vec<u8>) {
-    let builder = Builder::new(NOISE_PATTERN.parse().unwrap());
-    let keypair = builder.generate_keypair().unwrap();
-    (keypair.private, keypair.public)
+/// Generate a new Noise keypair.
+/// SECURITY: Private key is returned in a SecureBuffer (mlock'd, zeroize-on-drop).
+/// Returns `Err` on internal Noise library failures instead of panicking.
+pub fn generate_keypair() -> Result<(SecureBuffer, Vec<u8>), GhostError> {
+    let builder = Builder::new(
+        NOISE_PATTERN.parse()
+            .map_err(|e| GhostError::Crypto(format!("Noise pattern parse error: {}", e)))?
+    );
+    let keypair = builder.generate_keypair()
+        .map_err(|e| GhostError::Crypto(format!("Keypair generation failed: {}", e)))?;
+
+    let private = SecureBuffer::from_data(&keypair.private);
+    // keypair.private is on the stack/heap via snow — it will be dropped here,
+    // but the canonical copy is now in mlock'd SecureBuffer.
+    Ok((private, keypair.public))
 }
 
 #[cfg(test)]
@@ -189,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_keypair_generation() {
-        let (private, public) = generate_keypair();
+        let (private, public) = generate_keypair().expect("keypair gen should succeed");
         assert_eq!(private.len(), 32);
         assert_eq!(public.len(), 32);
     }

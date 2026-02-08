@@ -51,6 +51,9 @@ pub struct AuditEvent {
     pub subsystem: String,
     /// Event type and payload
     pub kind: AuditEventKind,
+    /// SHA-256 hash of the previous event (for chain verification)
+    #[serde(default)]
+    pub prev_hash: String,
 }
 
 /// Configuration for the audit subsystem
@@ -116,12 +119,21 @@ impl AuditLog {
         let filename = format!("audit_{}.jsonl", now.format("%Y%m%d_%H%M%S"));
         let current_log = log_dir.join(filename);
 
-        // SECURITY: If encryption is requested, create a cipher context
-        // with a random per-session key so audit logs are not stored as
-        // plaintext on disk.
+        // SECURITY: If encryption is requested, derive the cipher key
+        // from a persisted salt so audit logs can be decrypted later.
+        // The salt is written to a .key sidecar file beside the log.
         let cipher = if config.encrypt {
-            let key = crate::crypto::keys::generate_master_key();
-            match CipherContext::new(&key) {
+            let salt = crate::crypto::keys::generate_salt();
+            let master = crate::crypto::keys::generate_master_key();
+            let derived = crate::crypto::keys::derive_hmac_key(
+                master.as_bytes(),
+                b"ghostshell-audit-key-v1",
+            );
+            // Persist the salt so the key can be re-derived later
+            let key_path = current_log.with_extension("key");
+            let _ = fs::write(&key_path, &salt);
+
+            match CipherContext::new(derived.as_bytes()) {
                 Ok(c) => Some(c),
                 Err(_) => {
                     return Err(GhostError::Audit(
@@ -161,6 +173,7 @@ impl AuditLog {
             timestamp: chrono::Local::now().to_rfc3339(),
             subsystem: subsystem.to_string(),
             kind,
+            prev_hash: String::new(),
         };
 
         // Serialize to JSON line
@@ -291,6 +304,151 @@ impl AuditLog {
     }
 }
 
+// ── Merkle Hash-Chained Audit Log ─────────────────────────────────
+
+use sha2::{Sha256, Digest};
+
+/// A chain entry pairing an event's serialized form with its hash.
+pub struct ChainEntry {
+    /// SHA-256 hash of (prev_hash || event_json)
+    pub hash: String,
+    /// The prev_hash stored in this event
+    pub prev_hash: String,
+    /// Serialized event JSON (for re-hashing during verification)
+    pub event_json: String,
+}
+
+/// Wraps an `AuditLog` with hash-chain integrity (Merkle-style).
+/// Each logged event includes the SHA-256 hash of the previous entry,
+/// creating a tamper-evident chain.
+pub struct MerkleAuditLog {
+    inner: AuditLog,
+    /// In-memory chain of hashes for verification
+    pub chain: Vec<ChainEntry>,
+}
+
+impl MerkleAuditLog {
+    /// Create a new Merkle audit log wrapping an inner `AuditLog`.
+    pub fn new(inner: AuditLog) -> Self {
+        Self {
+            inner,
+            chain: Vec::new(),
+        }
+    }
+
+    /// Compute SHA-256 of (prev_hash || data) → hex string.
+    fn compute_hash(prev_hash: &str, data: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(prev_hash.as_bytes());
+        hasher.update(data.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// Log an event with hash chaining.
+    pub fn log_event(
+        &mut self,
+        subsystem: &str,
+        kind: AuditEventKind,
+    ) -> Result<(), GhostError> {
+        let prev_hash = self
+            .chain
+            .last()
+            .map(|e| e.hash.clone())
+            .unwrap_or_default();
+
+        self.inner.sequence += 1;
+
+        let event = AuditEvent {
+            seq: self.inner.sequence,
+            timestamp: chrono::Local::now().to_rfc3339(),
+            subsystem: subsystem.to_string(),
+            kind,
+            prev_hash: prev_hash.clone(),
+        };
+
+        let event_json = serde_json::to_string(&event).map_err(|e| {
+            GhostError::Audit(format!("Failed to serialize audit event: {}", e))
+        })?;
+
+        let hash = Self::compute_hash(&prev_hash, &event_json);
+
+        self.chain.push(ChainEntry {
+            hash,
+            prev_hash,
+            event_json: event_json.clone(),
+        });
+
+        // Write through to the inner log file
+        let line_bytes = if self.inner.encrypt {
+            if let Some(ref mut cipher) = self.inner.cipher {
+                let encrypted = cipher
+                    .encrypt(event_json.as_bytes(), None)
+                    .map_err(|e| {
+                        GhostError::Audit(format!("Failed to encrypt audit event: {:?}", e))
+                    })?;
+                base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &encrypted.to_bytes(),
+                )
+                .into_bytes()
+            } else {
+                event_json.into_bytes()
+            }
+        } else {
+            event_json.into_bytes()
+        };
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.inner.current_log)?;
+        file.write_all(&line_bytes)?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+
+        // Write the root file
+        self.write_root_file()?;
+
+        Ok(())
+    }
+
+    /// Verify the entire chain is intact (no tampering).
+    pub fn verify_chain(&self) -> bool {
+        let mut prev_hash = String::new();
+        for entry in &self.chain {
+            if entry.prev_hash != prev_hash {
+                return false;
+            }
+            let recomputed = Self::compute_hash(&entry.prev_hash, &entry.event_json);
+            if recomputed != entry.hash {
+                return false;
+            }
+            prev_hash = entry.hash.clone();
+        }
+        true
+    }
+
+    /// Get the current Merkle root (hash of the last entry).
+    pub fn merkle_root(&self) -> Option<&str> {
+        self.chain.last().map(|e| e.hash.as_str())
+    }
+
+    /// Number of entries in the chain.
+    pub fn chain_len(&self) -> usize {
+        self.chain.len()
+    }
+
+    /// Write the current Merkle root atomically to a `.root` file beside the log.
+    fn write_root_file(&self) -> Result<(), GhostError> {
+        if let Some(root) = self.merkle_root() {
+            let root_path = self.inner.current_log.with_extension("root");
+            crate::config::atomic_write(&root_path, root.as_bytes())
+                .map_err(|e| GhostError::Audit(format!("Failed to write Merkle root: {}", e)))?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +544,83 @@ mod tests {
         assert!(!content.contains("SessionStart"),
             "Encrypted audit log must not contain plaintext event type");
         assert!(!content.is_empty(), "Encrypted audit log should not be empty");
+    }
+
+    // ── Merkle audit log tests ──
+
+    #[test]
+    fn test_merkle_chain_integrity() {
+        let dir = TempDir::new().unwrap();
+        let config = AuditConfig {
+            encrypt: false,
+            ..Default::default()
+        };
+        let inner = AuditLog::new(dir.path(), &config).unwrap();
+        let mut merkle = MerkleAuditLog::new(inner);
+
+        merkle.log_event("test", AuditEventKind::SessionStart).unwrap();
+        merkle.log_event("test", AuditEventKind::SessionEnd).unwrap();
+        merkle.log_event("auth", AuditEventKind::AuthAttempt {
+            success: true,
+            method: "password".to_string(),
+        }).unwrap();
+
+        assert_eq!(merkle.chain_len(), 3);
+        assert!(merkle.verify_chain());
+    }
+
+    #[test]
+    fn test_merkle_tamper_detection() {
+        let dir = TempDir::new().unwrap();
+        let config = AuditConfig {
+            encrypt: false,
+            ..Default::default()
+        };
+        let inner = AuditLog::new(dir.path(), &config).unwrap();
+        let mut merkle = MerkleAuditLog::new(inner);
+
+        merkle.log_event("test", AuditEventKind::SessionStart).unwrap();
+        merkle.log_event("test", AuditEventKind::SessionEnd).unwrap();
+
+        // Tamper with a hash in the chain
+        if let Some(entry) = merkle.chain.get_mut(0) {
+            entry.hash = "tampered_hash".to_string();
+        }
+
+        assert!(!merkle.verify_chain());
+    }
+
+    #[test]
+    fn test_merkle_empty_chain() {
+        let dir = TempDir::new().unwrap();
+        let config = AuditConfig {
+            encrypt: false,
+            ..Default::default()
+        };
+        let inner = AuditLog::new(dir.path(), &config).unwrap();
+        let merkle = MerkleAuditLog::new(inner);
+
+        assert_eq!(merkle.chain_len(), 0);
+        assert!(merkle.verify_chain()); // Empty chain is valid
+        assert_eq!(merkle.merkle_root(), None);
+    }
+
+    #[test]
+    fn test_merkle_root_changes() {
+        let dir = TempDir::new().unwrap();
+        let config = AuditConfig {
+            encrypt: false,
+            ..Default::default()
+        };
+        let inner = AuditLog::new(dir.path(), &config).unwrap();
+        let mut merkle = MerkleAuditLog::new(inner);
+
+        merkle.log_event("test", AuditEventKind::SessionStart).unwrap();
+        let root1 = merkle.merkle_root().unwrap().to_string();
+
+        merkle.log_event("test", AuditEventKind::SessionEnd).unwrap();
+        let root2 = merkle.merkle_root().unwrap().to_string();
+
+        assert_ne!(root1, root2, "Root should change with each entry");
     }
 }

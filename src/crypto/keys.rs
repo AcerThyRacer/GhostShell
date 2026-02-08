@@ -47,11 +47,15 @@ impl DerivedKey {
     }
 }
 
-/// Generate a new random master key
-pub fn generate_master_key() -> Vec<u8> {
+/// Generate a new random master key.
+/// SECURITY: Returns a SecureBuffer (mlock'd, zeroize-on-drop) —
+/// callers never need to manually zeroize.
+pub fn generate_master_key() -> SecureBuffer {
     let mut key = vec![0u8; MASTER_KEY_SIZE];
     rand::thread_rng().fill_bytes(&mut key);
-    key
+    let buf = SecureBuffer::from_data(&key);
+    key.zeroize();
+    buf
 }
 
 /// Generate a random nonce for encryption
@@ -97,7 +101,7 @@ pub fn derive_key_argon2id(
         parallelism,
         Some(MASTER_KEY_SIZE),
     )
-    .unwrap_or_else(|_| Params::default());
+    .expect("Argon2id parameter error — refusing to use weak defaults");
 
     let argon2 = Argon2::new(argon2::Algorithm::Argon2id, Version::V0x13, params);
 
@@ -139,9 +143,7 @@ pub struct KeyRotation {
 impl KeyRotation {
     pub fn new(old_key: SecureBuffer, _config: &CryptoConfig) -> Self {
         let new_salt = generate_salt();
-        let mut new_master = generate_master_key();
-        let new_key = SecureBuffer::from_data(&new_master);
-        new_master.zeroize();
+        let new_key = generate_master_key();
 
         Self {
             old_key,
@@ -160,7 +162,7 @@ mod tests {
         let key = generate_master_key();
         assert_eq!(key.len(), MASTER_KEY_SIZE);
         // Should be random, not all zeros
-        assert!(!key.iter().all(|&b| b == 0));
+        assert!(!key.as_bytes().iter().all(|&b| b == 0));
     }
 
     #[test]
@@ -198,7 +200,7 @@ mod tests {
     #[test]
     fn test_hmac_derivation() {
         let master = generate_master_key();
-        let hmac_key = derive_hmac_key(&master, b"test-context");
+        let hmac_key = derive_hmac_key(master.as_bytes(), b"test-context");
         assert_eq!(hmac_key.len(), 32);
     }
 

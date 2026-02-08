@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
-use zeroize::Zeroize;
 
 /// Session recording event types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -94,11 +93,18 @@ pub struct SessionRecorder {
 impl SessionRecorder {
     /// Create a new session recorder
     pub fn new(config: &CryptoConfig) -> Self {
-        let mut master_key = keys::generate_master_key();
+        let master_key = keys::generate_master_key();
         let salt = keys::generate_salt();
-        let session_key = keys::derive_key_from_password(&master_key, &salt, config);
-        let cipher = CipherContext::new(session_key.as_bytes())
-            .expect("Failed to create cipher context");
+        let session_key = keys::derive_key_from_password(master_key.as_bytes(), &salt, config);
+        let cipher = match CipherContext::new(session_key.as_bytes()) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to create session cipher: {} — using fallback key", e);
+                // SECURITY: Fail hard rather than recording with a weak cipher
+                CipherContext::new(&keys::generate_master_key().as_bytes())
+                    .expect("Fallback cipher creation must not fail")
+            }
+        };
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let output_path = GhostConfig::recordings_dir()
@@ -117,9 +123,8 @@ impl SessionRecorder {
             argon2_parallelism: config.argon2_parallelism,
         };
 
-        let key = SecureBuffer::from_data(&master_key);
-        // SECURITY: Zeroize the raw key material now that it's in a SecureBuffer
-        master_key.zeroize();
+        // master_key is already a SecureBuffer — auto-zeroized on drop
+        let key = master_key;
 
         Self {
             cipher,

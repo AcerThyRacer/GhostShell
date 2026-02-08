@@ -7,6 +7,7 @@ use crate::crypto::secure_mem::SecureBuffer;
 use crate::error::GhostError;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 // ── Cipher Suite Configuration ───────────────────────────────────
 
@@ -45,7 +46,8 @@ impl Default for CipherSuiteConfig {
 
 // ── Classic X25519 Key Exchange ──────────────────────────────────
 
-/// X25519 key pair for classic Diffie-Hellman
+/// X25519 key pair for classic Diffie-Hellman.
+/// SECURITY: Uses real Curve25519 via x25519-dalek.
 #[derive(Clone)]
 pub struct X25519KeyPair {
     pub public_key: [u8; 32],
@@ -53,32 +55,37 @@ pub struct X25519KeyPair {
 }
 
 impl X25519KeyPair {
-    /// Generate a new X25519 key pair
+    /// Generate a new X25519 key pair using real Curve25519
     pub fn generate() -> Self {
-        let mut secret = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut secret);
+        let secret = x25519_dalek::StaticSecret::random_from_rng(rand::thread_rng());
+        let public = x25519_dalek::PublicKey::from(&secret);
 
-        // Clamp the secret key per X25519 spec
-        secret[0] &= 248;
-        secret[31] &= 127;
-        secret[31] |= 64;
-
-        // Compute public key: P = s * G
-        let public_key = x25519_base_point_mul(&secret);
-
-        let secret_key = SecureBuffer::from_data(&secret);
-        secret.iter_mut().for_each(|b| *b = 0);
+        let secret_bytes = secret.to_bytes();
+        let secret_key = SecureBuffer::from_data(&secret_bytes);
+        // secret_bytes is on the stack and will be overwritten; StaticSecret
+        // implements Zeroize via x25519-dalek
 
         Self {
-            public_key,
+            public_key: public.to_bytes(),
             secret_key,
         }
     }
 
-    /// Perform key exchange with a remote public key
+    /// Perform key exchange with a remote public key.
+    /// SECURITY: Real Curve25519 ECDH — both sides derive the same shared secret.
     pub fn exchange(&self, remote_public: &[u8; 32]) -> SecureBuffer {
-        let shared = x25519_scalar_mul(self.secret_key.as_bytes(), remote_public);
-        SecureBuffer::from_data(&shared)
+        use x25519_dalek::{PublicKey, StaticSecret};
+
+        // Reconstruct our secret from the SecureBuffer
+        let mut secret_bytes = [0u8; 32];
+        secret_bytes.copy_from_slice(self.secret_key.as_bytes());
+        let secret = StaticSecret::from(secret_bytes);
+        secret_bytes.zeroize();
+
+        let their_public = PublicKey::from(*remote_public);
+        let shared = secret.diffie_hellman(&their_public);
+
+        SecureBuffer::from_data(shared.as_bytes())
     }
 
     /// Get the public key bytes
@@ -98,7 +105,11 @@ pub const KYBER768_CIPHERTEXT_SIZE: usize = 1088;
 /// The size of a Kyber768 shared secret
 pub const KYBER768_SHARED_SECRET_SIZE: usize = 32;
 
-/// Kyber768 key pair for post-quantum key encapsulation
+/// Kyber768 key pair for post-quantum key encapsulation.
+///
+/// # SECURITY STUB
+/// This uses HMAC-based placeholders — NOT real lattice crypto.
+/// For production, replace with the `pqcrypto-kyber` crate.
 #[derive(Clone)]
 pub struct KyberKeyPair {
     pub public_key: Vec<u8>,
@@ -112,22 +123,20 @@ pub struct KyberEncapsulation {
 }
 
 impl KyberKeyPair {
-    /// Generate a new Kyber768 key pair
-    /// Uses randomness seeded from the system CSPRNG
+    /// Generate a new Kyber768 key pair.
+    /// WARNING: HMAC-based stub — not real Kyber768.
     pub fn generate() -> Self {
         let mut pk = vec![0u8; KYBER768_PUBLIC_KEY_SIZE];
         let mut sk = vec![0u8; KYBER768_SECRET_KEY_SIZE];
 
-        // Generate random seed for key generation
         let mut seed = [0u8; 64];
         rand::thread_rng().fill_bytes(&mut seed);
 
-        // Derive deterministic key pair from seed using SHAKE-256-like expansion
         kyber_keygen_from_seed(&seed, &mut pk, &mut sk);
-        seed.iter_mut().for_each(|b| *b = 0);
+        seed.zeroize();
 
         let secret_key = SecureBuffer::from_data(&sk);
-        sk.iter_mut().for_each(|b| *b = 0);
+        sk.zeroize();
 
         Self {
             public_key: pk,
@@ -151,7 +160,7 @@ impl KyberKeyPair {
         rand::thread_rng().fill_bytes(&mut random_coins);
 
         kyber_encaps(remote_pk, &random_coins, &mut ciphertext, &mut shared_secret);
-        random_coins.iter_mut().for_each(|b| *b = 0);
+        random_coins.zeroize();
 
         Ok(KyberEncapsulation {
             ciphertext,
@@ -292,14 +301,20 @@ pub const DILITHIUM3_PK_SIZE: usize = 1952;
 pub const DILITHIUM3_SK_SIZE: usize = 4000;
 pub const DILITHIUM3_SIG_SIZE: usize = 3293;
 
-/// Dilithium3 key pair for post-quantum signatures
+/// Dilithium3 key pair for post-quantum signatures.
+///
+/// # SECURITY STUB
+/// This uses HMAC-based placeholders — NOT real lattice-based signatures.
+/// `verify()` always returns `false` (fail-closed) to prevent misuse.
+/// For production, replace with the `pqcrypto-dilithium` crate.
 pub struct DilithiumKeyPair {
     pub public_key: Vec<u8>,
     secret_key: SecureBuffer,
 }
 
 impl DilithiumKeyPair {
-    /// Generate a new Dilithium3 signing key pair
+    /// Generate a new Dilithium3 signing key pair.
+    /// WARNING: HMAC-based stub — not real Dilithium3.
     pub fn generate() -> Self {
         let mut pk = vec![0u8; DILITHIUM3_PK_SIZE];
         let mut sk = vec![0u8; DILITHIUM3_SK_SIZE];
@@ -307,10 +322,10 @@ impl DilithiumKeyPair {
         rand::thread_rng().fill_bytes(&mut seed);
 
         dilithium_keygen(&seed, &mut pk, &mut sk);
-        seed.iter_mut().for_each(|b| *b = 0);
+        seed.zeroize();
 
         let secret_key = SecureBuffer::from_data(&sk);
-        sk.iter_mut().for_each(|b| *b = 0);
+        sk.zeroize();
 
         Self {
             public_key: pk,
@@ -318,61 +333,30 @@ impl DilithiumKeyPair {
         }
     }
 
-    /// Sign a message
+    /// Sign a message.
+    /// WARNING: HMAC-based stub — not a real lattice signature.
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
         let mut signature = vec![0u8; DILITHIUM3_SIG_SIZE];
         dilithium_sign(self.secret_key.as_bytes(), message, &mut signature);
         signature
     }
 
-    /// Verify a signature against a public key
-    pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
-        if public_key.len() != DILITHIUM3_PK_SIZE || signature.len() != DILITHIUM3_SIG_SIZE {
-            return false;
-        }
-        dilithium_verify(public_key, message, signature)
+    /// Verify a signature against a public key.
+    /// SECURITY: Always returns false — stub cannot provide real verification.
+    /// This is fail-closed to prevent false sense of security.
+    pub fn verify(_public_key: &[u8], _message: &[u8], _signature: &[u8]) -> bool {
+        // SECURITY STUB: Real Dilithium3 verification requires the
+        // pqcrypto-dilithium crate. Returning false (fail-closed) is
+        // safer than accepting any signature.
+        tracing::warn!("Dilithium3 verify called on STUB implementation — always returns false");
+        false
     }
 }
 
 // ── Internal crypto primitives ───────────────────────────────────
-// These are simplified implementations — in production, these would
-// use the pqcrypto-kyber and pqcrypto-dilithium crates compiled from
-// reference C implementations. The interfaces are kept accurate.
-
-/// X25519 scalar multiplication with base point
-fn x25519_base_point_mul(scalar: &[u8]) -> [u8; 32] {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-
-    // Derive a deterministic "public key" from the scalar
-    // In production: this uses Curve25519 base point multiplication
-    let mut mac = HmacSha256::new_from_slice(b"ghostshell-x25519-basepoint")
-        .expect("HMAC key error");
-    mac.update(scalar);
-    let result = mac.finalize();
-
-    let mut output = [0u8; 32];
-    output.copy_from_slice(&result.into_bytes());
-    output
-}
-
-/// X25519 scalar multiplication
-fn x25519_scalar_mul(scalar: &[u8], point: &[u8; 32]) -> [u8; 32] {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-
-    // In production: this uses Curve25519 scalar multiplication
-    let mut mac = HmacSha256::new_from_slice(scalar).expect("HMAC key error");
-    mac.update(point);
-    mac.update(b"ghostshell-x25519-exchange");
-    let result = mac.finalize();
-
-    let mut output = [0u8; 32];
-    output.copy_from_slice(&result.into_bytes());
-    output
-}
+// X25519 is now handled by x25519-dalek (see X25519KeyPair above).
+// Kyber and Dilithium remain simplified HMAC-based STUBS.
+// In production, replace with pqcrypto-kyber / pqcrypto-dilithium.
 
 /// Kyber768 key generation from seed
 fn kyber_keygen_from_seed(seed: &[u8; 64], pk: &mut [u8], sk: &mut [u8]) {
@@ -499,27 +483,6 @@ fn dilithium_sign(sk: &[u8], message: &[u8], signature: &mut [u8]) {
     }
 }
 
-/// Dilithium3 verify
-fn dilithium_verify(pk: &[u8], message: &[u8], signature: &[u8]) -> bool {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    type HmacSha256 = Hmac<Sha256>;
-
-    // Reconstruct expected signature from pk-derived sk + message
-    // In production: uses lattice-based verification
-    // Here we use a simplified scheme where the pk encodes enough info to verify
-
-    // Derive the "verification key" from public key
-    let mut mac = HmacSha256::new_from_slice(&pk[..32]).expect("HMAC key error");
-    mac.update(message);
-    mac.update(b"ghostshell-dilithium3-verify");
-    let _check = mac.finalize().into_bytes();
-
-    // Simplified: check signature is non-trivially structured
-    // In production: full lattice-based verification
-    !signature.iter().all(|&b| b == 0)
-}
-
 /// Combine shared secrets using HKDF-like extraction
 fn combine_shared_secrets(
     x25519_shared: &[u8],
@@ -566,10 +529,9 @@ mod tests {
         let alice_shared = alice.exchange(&bob.public_key);
         let bob_shared = bob.exchange(&alice.public_key);
 
-        // Both sides should derive the same shared secret
-        // Note: in our simplified implementation this holds by HMAC properties
+        // REAL X25519: Both sides derive the same shared secret
+        assert_eq!(alice_shared.as_bytes(), bob_shared.as_bytes());
         assert_eq!(alice_shared.len(), 32);
-        assert_eq!(bob_shared.len(), 32);
     }
 
     #[test]
@@ -628,15 +590,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dilithium_sign_verify() {
+    fn test_dilithium_sign_verify_stub() {
         let kp = DilithiumKeyPair::generate();
         let message = b"GhostShell plugin verification payload";
 
         let signature = kp.sign(message);
         assert_eq!(signature.len(), DILITHIUM3_SIG_SIZE);
 
+        // STUB: verify always returns false (fail-closed)
         let valid = DilithiumKeyPair::verify(&kp.public_key, message, &signature);
-        assert!(valid);
+        assert!(!valid, "Stub Dilithium verify must return false");
     }
 
     #[test]

@@ -1,135 +1,210 @@
 // ╔══════════════════════════════════════════════════════════════════╗
 // ║              GhostShell — TUI Renderer                           ║
-// ║         Ratatui-based rendering with stealth themes              ║
+// ║         Minimal zsh-style rendering with ghost ASCII art         ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
 use crate::app::{AppMode, GhostApp};
-use crate::terminal::status_bar;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
-/// Theme colors for the overall UI
+/// Minimal monochrome theme
 struct UiTheme {
     bg: Color,
     fg: Color,
-    border: Color,
-    border_active: Color,
-    title: Color,
+    dim: Color,
+    accent: Color,
     cursor: Color,
 }
 
 impl UiTheme {
-    fn from_scheme(name: &str) -> Self {
-        match name {
-            "ghost" => Self {
-                bg: Color::Rgb(10, 10, 18),
-                fg: Color::Rgb(180, 190, 200),
-                border: Color::Rgb(40, 45, 55),
-                border_active: Color::Rgb(80, 200, 255),
-                title: Color::Rgb(80, 200, 255),
-                cursor: Color::Rgb(80, 200, 255),
-            },
-            "matrix" => Self {
-                bg: Color::Rgb(0, 5, 0),
-                fg: Color::Rgb(0, 200, 0),
-                border: Color::Rgb(0, 50, 0),
-                border_active: Color::Rgb(0, 255, 0),
-                title: Color::Rgb(0, 255, 0),
-                cursor: Color::Rgb(0, 255, 0),
-            },
-            "midnight" => Self {
-                bg: Color::Rgb(8, 8, 24),
-                fg: Color::Rgb(160, 160, 210),
-                border: Color::Rgb(30, 30, 70),
-                border_active: Color::Rgb(130, 100, 255),
-                title: Color::Rgb(130, 100, 255),
-                cursor: Color::Rgb(130, 100, 255),
-            },
-            "stealth" => Self {
-                bg: Color::Rgb(0, 0, 0),
-                fg: Color::Rgb(120, 120, 120),
-                border: Color::Rgb(30, 30, 30),
-                border_active: Color::Rgb(80, 80, 80),
-                title: Color::Rgb(80, 80, 80),
-                cursor: Color::Rgb(80, 80, 80),
-            },
-            "crimson" => Self {
-                bg: Color::Rgb(15, 3, 3),
-                fg: Color::Rgb(200, 150, 150),
-                border: Color::Rgb(60, 20, 20),
-                border_active: Color::Rgb(255, 60, 80),
-                title: Color::Rgb(255, 60, 80),
-                cursor: Color::Rgb(255, 60, 80),
-            },
-            _ => Self::from_scheme("ghost"),
+    fn minimal() -> Self {
+        Self {
+            bg: Color::Rgb(10, 10, 14),
+            fg: Color::Rgb(170, 170, 180),
+            dim: Color::Rgb(70, 70, 80),
+            accent: Color::Rgb(140, 140, 160),
+            cursor: Color::Rgb(200, 200, 210),
         }
     }
 }
 
-/// Get border type from config
-fn border_type(style: &str) -> ratatui::widgets::BorderType {
-    match style {
-        "single" => ratatui::widgets::BorderType::Plain,
-        "double" => ratatui::widgets::BorderType::Double,
-        "rounded" => ratatui::widgets::BorderType::Rounded,
-        "thick" => ratatui::widgets::BorderType::Thick,
-        "none" => ratatui::widgets::BorderType::Plain,
-        _ => ratatui::widgets::BorderType::Rounded,
-    }
+/// Ghost ASCII art
+fn ghost_art() -> Vec<&'static str> {
+    vec![
+        r"         ___",
+        r"        /   \",
+        r"       | o o |",
+        r"       |  ~  |",
+        r"       | ___ |",
+        r"       |/   \|",
+        r"        \   /",
+        r"         \_/",
+        r"        /| |\",
+        r"       (_| |_)",
+    ]
 }
 
-/// GhostShell ASCII art welcome banner
-fn welcome_banner(fg: Color, accent: Color, dim: Color) -> Vec<Line<'static>> {
-    let art_lines = [
-        r"   ______  __               __  _____ __         ____  ",
-        r"  / ____/ / /_  ____  _____/ /_/ ___// /_  ___  / / /  ",
-        r" / / __  / __ \/ __ \/ ___/ __/\__ \/ __ \/ _ \/ / /   ",
-        r"/ /_/ / / / / / /_/ (__  ) /_ ___/ / / / /  __/ / /    ",
-        r"\____/ /_/ /_/\____/____/\__//____/_/ /_/\___/_/_/     ",
-    ];
+/// GHOSTSHELL ASCII banner
+fn ghostshell_banner() -> Vec<&'static str> {
+    vec![
+        r"  ██████  ██   ██  ██████  ███████ ████████ ███████ ██   ██ ███████ ██      ██     ",
+        r" ██       ██   ██ ██    ██ ██         ██    ██      ██   ██ ██      ██      ██     ",
+        r" ██   ███ ███████ ██    ██ ███████    ██    ███████ ███████ █████   ██      ██     ",
+        r" ██    ██ ██   ██ ██    ██      ██    ██         ██ ██   ██ ██      ██      ██     ",
+        r"  ██████  ██   ██  ██████  ███████    ██    ███████ ██   ██ ███████ ███████ ███████",
+    ]
+}
 
-    let mut lines = Vec::new();
+/// Startup welcome screen with ghost art + GHOSTSHELL banner
+fn welcome_screen(theme: &UiTheme) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
     lines.push(Line::from(""));
     lines.push(Line::from(""));
 
-    for art in &art_lines {
+    // Ghost art
+    for art_line in ghost_art() {
         lines.push(Line::from(Span::styled(
-            art.to_string(),
-            Style::default().fg(accent),
+            art_line.to_string(),
+            Style::default().fg(theme.dim),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    // GHOSTSHELL banner
+    for banner_line in ghostshell_banner() {
+        lines.push(Line::from(Span::styled(
+            banner_line.to_string(),
+            Style::default().fg(theme.accent),
         )));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Stealth Terminal Multiplexer v0.1.0",
-        Style::default().fg(dim),
+        Style::default().fg(theme.dim),
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  > Type to begin. Ctrl-G for commands.",
-        Style::default().fg(fg),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  > Ctrl-G : for command mode",
-        Style::default().fg(dim),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  > Ctrl-G h/v to split panes",
-        Style::default().fg(dim),
+        "  Type /help for commands",
+        Style::default().fg(theme.dim),
     )));
     lines.push(Line::from(""));
 
     lines
 }
 
+/// Help screen content
+fn help_screen(app: &GhostApp) -> Vec<Line<'static>> {
+    let dim = Color::Rgb(70, 70, 80);
+    let fg = Color::Rgb(170, 170, 180);
+    let accent = Color::Rgb(140, 140, 160);
+    let heading = Color::Rgb(200, 200, 210);
+
+    let animations_status = if app.animations_enabled { "ON" } else { "OFF" };
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  GHOSTSHELL — Help",
+            Style::default().fg(heading).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────────────",
+            Style::default().fg(dim),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  GhostShell is a stealth terminal multiplexer with",
+            Style::default().fg(fg),
+        )),
+        Line::from(Span::styled(
+            "  encrypted sessions, decoy shells, intrusion detection,",
+            Style::default().fg(fg),
+        )),
+        Line::from(Span::styled(
+            "  and dead man's switch capabilities.",
+            Style::default().fg(fg),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  SLASH COMMANDS",
+            Style::default().fg(heading).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────────────",
+            Style::default().fg(dim),
+        )),
+        Line::from(Span::styled("  /help             Show this help screen", Style::default().fg(fg))),
+        Line::from(Span::styled(format!("  /animations       Toggle animations [{animations_status}]"), Style::default().fg(fg))),
+        Line::from(Span::styled("  /effects <name>   Enable a visual effect (needs /animations)", Style::default().fg(fg))),
+        Line::from(Span::styled("                    fog, matrix, glitch, static, rain, off", Style::default().fg(dim))),
+        Line::from(Span::styled("  /theme <name>     Change color theme", Style::default().fg(fg))),
+        Line::from(Span::styled("                    ghost, matrix, midnight, stealth, crimson", Style::default().fg(dim))),
+        Line::from(Span::styled("  /stealth          Toggle stealth mode", Style::default().fg(fg))),
+        Line::from(Span::styled("  /lock             Lock the session", Style::default().fg(fg))),
+        Line::from(Span::styled("  /clear            Clear screen", Style::default().fg(fg))),
+        Line::from(Span::styled("  /quit             Exit GhostShell", Style::default().fg(fg))),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  KEYBINDINGS",
+            Style::default().fg(heading).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────────────",
+            Style::default().fg(dim),
+        )),
+        Line::from(Span::styled("  Ctrl+G            Prefix key (enter command mode)", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G :          Command input mode", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G h          Split pane horizontal", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G v          Split pane vertical", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G x          Close active pane", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G t          New tab", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G n/p        Next/previous tab", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G r          Toggle recording", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G w          Wipe scrollback", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G ↑↓←→       Navigate panes", Style::default().fg(fg))),
+        Line::from(Span::styled("  Ctrl+G×3          PANIC — switch to decoy shell", Style::default().fg(accent))),
+        Line::from(Span::styled("  Ctrl+Q            Emergency quit", Style::default().fg(accent))),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  FEATURES",
+            Style::default().fg(heading).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  ─────────────────────────────────────────────",
+            Style::default().fg(dim),
+        )),
+        Line::from(Span::styled("  • Encrypted session recording & playback", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Auto-wiping scrollback buffers", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Decoy shells with panic key switching", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Anomaly-based intrusion detection (IDS)", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Behavioral biometrics (typing cadence)", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Dead man's switch (inactivity auto-wipe)", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Steganographic session export", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Process name cloaking", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Encrypted peer-to-peer tunneling", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Secure clipboard with TTL", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Plugin system with lifecycle hooks", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Config hot-reload", Style::default().fg(fg))),
+        Line::from(Span::styled("  • Encrypted audit trail", Style::default().fg(fg))),
+        Line::from(""),
+        Line::from(Span::styled("  Press Esc or type /clear to dismiss", Style::default().fg(dim))),
+        Line::from(""),
+    ];
+
+    lines
+}
+
 /// Main render function
 pub fn render(f: &mut Frame, app: &GhostApp) {
-    let theme = UiTheme::from_scheme(&app.config.theme.scheme);
+    let theme = UiTheme::minimal();
     let size = f.area();
 
     // Clear background
@@ -143,51 +218,34 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
             return;
         }
         AppMode::Decoy => {
-            render_decoy(f, size, app, &theme);
+            render_decoy(f, size, app);
             return;
         }
         _ => {}
     }
 
-    // Normal layout: main area + status bar
-    let show_status = app.config.theme.status_bar != "hidden";
-    let status_height = if show_status { 1 } else { 0 };
+    // Check if help is showing
+    if app.show_help {
+        let help_lines = help_screen(app);
+        let para = Paragraph::new(help_lines)
+            .style(Style::default().bg(theme.bg))
+            .wrap(Wrap { trim: false });
+        f.render_widget(para, size);
 
-    let chunks = if app.config.theme.status_bar == "top" && show_status {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(status_height),
-                Constraint::Min(1),
-            ])
-            .split(size)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(status_height),
-            ])
-            .split(size)
-    };
+        // Still show command input if in command mode
+        if app.mode == AppMode::Command {
+            render_command_input(f, size, app, &theme);
+        }
+        return;
+    }
 
-    let (main_area, status_area) = if app.config.theme.status_bar == "top" && show_status {
-        (chunks[1], Some(chunks[0]))
-    } else if show_status {
-        (chunks[0], Some(chunks[1]))
-    } else {
-        (chunks[0], None)
-    };
+    // Minimal layout: just the terminal content, no status bar by default
+    let main_area = size;
 
-    // Render panes in the layout
+    // Render panes — no borders, no chrome
     let pane_rects = app.layout.calculate_rects(main_area);
-    let bt = border_type(&app.config.theme.border_style);
-    let hide_borders = app.config.theme.border_style == "none";
-    let is_stealth = app.mode == AppMode::Stealth;
 
     for (pane_id, rect) in &pane_rects {
-        let is_active = app.layout.active_pane_id() == Some(*pane_id);
-
         // Get pane content
         let content_lines: Vec<Line> = if let Some(pane) = app.panes.panes.get(pane_id) {
             let visible = pane.visible_content();
@@ -204,53 +262,16 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
                     })
                     .collect()
             } else {
-                // Show welcome banner for empty panes
-                welcome_banner(theme.fg, theme.border_active, Color::Rgb(80, 85, 100))
+                // Show welcome screen for empty panes
+                welcome_screen(&theme)
             }
         } else {
-            // No PTY — show welcome banner
-            welcome_banner(theme.fg, theme.border_active, Color::Rgb(80, 85, 100))
+            welcome_screen(&theme)
         };
 
-        // Minimal title — empty for borderless, short for bordered
-        let title = if hide_borders || is_stealth {
-            String::new()
-        } else if let Some(pane) = app.panes.panes.get(pane_id) {
-            if pane.title.is_empty() {
-                String::new()
-            } else {
-                format!(" {} ", pane.title)
-            }
-        } else {
-            String::new()
-        };
-
-        let border_color = if is_active {
-            theme.border_active
-        } else {
-            theme.border
-        };
-
-        let borders = if hide_borders {
-            Borders::NONE
-        } else {
-            Borders::ALL
-        };
-
+        // No borders — raw terminal content
         let block = Block::default()
-            .borders(borders)
-            .border_type(bt)
-            .border_style(Style::default().fg(border_color))
-            .title(Span::styled(
-                title,
-                Style::default()
-                    .fg(if is_active { theme.title } else { theme.border })
-                    .add_modifier(if is_active {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            ))
+            .borders(Borders::NONE)
             .style(Style::default().bg(theme.bg));
 
         let para = Paragraph::new(content_lines)
@@ -260,11 +281,9 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
         f.render_widget(para, *rect);
     }
 
-    // Render status bar
-    if let Some(status_rect) = status_area {
-        if show_status {
-            status_bar::render_status_bar(f, status_rect, app);
-        }
+    // Show command output if present
+    if !app.command_output.is_empty() {
+        render_command_output(f, size, app, &theme);
     }
 
     // Render command input if in command mode
@@ -276,56 +295,41 @@ pub fn render(f: &mut Frame, app: &GhostApp) {
 
 /// Render the lock screen
 fn render_lock_screen(f: &mut Frame, area: Rect, theme: &UiTheme) {
-    let lock_text = vec![
-        Line::from(""),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  ╔═══════════════════════════════════════╗  ",
-            Style::default().fg(theme.border_active),
-        )),
-        Line::from(Span::styled(
-            "  ║         🔐 SESSION LOCKED 🔐          ║  ",
-            Style::default()
-                .fg(Color::Rgb(255, 80, 80))
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(Span::styled(
-            "  ╠═══════════════════════════════════════╣  ",
-            Style::default().fg(theme.border_active),
-        )),
-        Line::from(Span::styled(
-            "  ║                                       ║  ",
-            Style::default().fg(theme.border_active),
-        )),
-        Line::from(Span::styled(
-            "  ║    Enter password to unlock session    ║  ",
-            Style::default().fg(theme.fg),
-        )),
-        Line::from(Span::styled(
-            "  ║                                       ║  ",
-            Style::default().fg(theme.border_active),
-        )),
-        Line::from(Span::styled(
-            "  ║    Password: ••••••••                  ║  ",
-            Style::default().fg(theme.fg),
-        )),
-        Line::from(Span::styled(
-            "  ║                                       ║  ",
-            Style::default().fg(theme.border_active),
-        )),
-        Line::from(Span::styled(
-            "  ╚═══════════════════════════════════════╝  ",
-            Style::default().fg(theme.border_active),
-        )),
-    ];
+    let mut lines = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(""));
 
-    let lock_para = Paragraph::new(lock_text)
+    for art_line in ghost_art() {
+        lines.push(Line::from(Span::styled(
+            art_line.to_string(),
+            Style::default().fg(theme.dim),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  SESSION LOCKED",
+        Style::default().fg(theme.cursor).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Enter password to unlock",
+        Style::default().fg(theme.fg),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Password: ........",
+        Style::default().fg(theme.dim),
+    )));
+    lines.push(Line::from(""));
+
+    let para = Paragraph::new(lines)
         .style(Style::default().bg(Color::Rgb(0, 0, 0)));
-    f.render_widget(lock_para, area);
+    f.render_widget(para, area);
 }
 
 /// Render decoy shell (looks like a normal terminal)
-fn render_decoy(f: &mut Frame, area: Rect, app: &GhostApp, _theme: &UiTheme) {
+fn render_decoy(f: &mut Frame, area: Rect, app: &GhostApp) {
     let decoy_content = app.decoy_system.get_visible_content();
 
     let lines: Vec<Line> = decoy_content
@@ -338,41 +342,69 @@ fn render_decoy(f: &mut Frame, area: Rect, app: &GhostApp, _theme: &UiTheme) {
         })
         .collect();
 
-    // Decoy looks like a plain terminal — no borders, no indicators
     let para = Paragraph::new(lines)
         .style(Style::default().bg(Color::Rgb(0, 0, 0)));
     f.render_widget(para, area);
 }
 
-/// Render command input overlay
+/// Render command output overlay
+fn render_command_output(f: &mut Frame, area: Rect, app: &GhostApp, theme: &UiTheme) {
+    let output_height = app.command_output.len().min(5) as u16;
+    if output_height == 0 || area.height < output_height + 2 {
+        return;
+    }
+
+    let output_area = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(output_height + 2),
+        area.width,
+        output_height,
+    );
+
+    let lines: Vec<Line> = app
+        .command_output
+        .iter()
+        .rev()
+        .take(output_height as usize)
+        .rev()
+        .map(|msg| {
+            Line::from(Span::styled(
+                format!("  {}", msg),
+                Style::default().fg(theme.dim),
+            ))
+        })
+        .collect();
+
+    let para = Paragraph::new(lines)
+        .style(Style::default().bg(theme.bg));
+    f.render_widget(para, output_area);
+}
+
+/// Render command input overlay — minimal prompt
 fn render_command_input(f: &mut Frame, area: Rect, app: &GhostApp, theme: &UiTheme) {
     let input_area = Rect::new(
         area.x,
-        area.y + area.height.saturating_sub(2),
+        area.y + area.height.saturating_sub(1),
         area.width,
         1,
     );
 
     let input_line = Line::from(vec![
         Span::styled(
-            " : ",
-            Style::default()
-                .fg(theme.cursor)
-                .add_modifier(Modifier::BOLD),
+            " > ",
+            Style::default().fg(theme.accent),
         ),
         Span::styled(
             &app.command_buffer,
             Style::default().fg(theme.fg),
         ),
         Span::styled(
-            "█",
-            Style::default()
-                .fg(theme.cursor)
-                .add_modifier(Modifier::SLOW_BLINK),
+            "_",
+            Style::default().fg(theme.cursor),
         ),
     ]);
 
     let para = Paragraph::new(input_line)
-        .style(Style::default().bg(Color::Rgb(20, 20, 35)));
+        .style(Style::default().bg(Color::Rgb(15, 15, 20)));
     f.render_widget(para, input_area);
 }

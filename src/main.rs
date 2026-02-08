@@ -4,7 +4,7 @@
 // ╚══════════════════════════════════════════════════════════════════╝
 
 // Suppress dead-code warnings for roadmap features not yet wired in
-#![allow(dead_code)]
+// Modules contain APIs for future phases; allow for now
 
 
 mod app;
@@ -21,6 +21,7 @@ mod stealth;
 mod terminal;
 
 use app::GhostApp;
+use zeroize::Zeroize;
 use clap::{Parser, Subcommand};
 use config::GhostConfig;
 use crossterm::{
@@ -80,6 +81,10 @@ struct Cli {
     /// Use specific config file
     #[arg(short, long)]
     config: Option<String>,
+
+    /// Start in safe mode (disables plugins, stealth, and advanced features)
+    #[arg(long)]
+    safe_mode: bool,
 }
 
 #[derive(Subcommand)]
@@ -149,6 +154,12 @@ async fn main() -> Result<(), GhostError> {
         GhostConfig::load()
     };
 
+    // SECURITY: Validate loaded config for security misconfigurations
+    let validation_errors = config::ConfigValidator::validate(&config);
+    for err in &validation_errors {
+        tracing::warn!("Config validation: {}", err);
+    }
+
     // Apply CLI overrides
     if cli.stealth {
         config.general.stealth_mode = true;
@@ -182,11 +193,15 @@ async fn main() -> Result<(), GhostError> {
         }
         Some(Commands::Keygen) => {
             let key = crypto::keys::generate_master_key();
-            println!("👻 Generated master key (keep this safe!):");
-            println!("  {}", base64::Engine::encode(
+            let mut encoded = base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
-                &key,
-            ));
+                key.as_bytes(),
+            );
+            println!("👻 Generated master key (keep this safe!):");
+            println!("  {}", encoded);
+            // SECURITY: Zeroize the base64 string — it contains the key material
+            encoded.zeroize();
+            // key is a SecureBuffer — zeroized on drop automatically
             return Ok(());
         }
         Some(Commands::Stego {
@@ -205,8 +220,27 @@ async fn main() -> Result<(), GhostError> {
 
     tracing::info!("GhostShell v{} starting", env!("CARGO_PKG_VERSION"));
 
-    // Apply process cloaking before entering the TUI
-    if config.stealth.process_cloak_enabled {
+    // ── Crash Recovery ───────────────────────────────────────────
+    let safe_mode = if cli.safe_mode {
+        tracing::info!("Safe mode enabled via --safe-mode flag");
+        true
+    } else if GhostConfig::detect_crash() {
+        tracing::warn!(
+            "Previous session did not exit cleanly — starting in SAFE MODE. \
+             Plugins, stealth, and advanced features are disabled."
+        );
+        true
+    } else {
+        false
+    };
+
+    // Write session lock (will be cleared on clean exit)
+    if let Err(e) = GhostConfig::write_session_lock() {
+        tracing::warn!("Failed to write session lock: {}", e);
+    }
+
+    // Apply process cloaking before entering the TUI (skip in safe mode)
+    if !safe_mode && config.stealth.process_cloak_enabled {
         if let Err(e) = stealth::process_cloak::cloak_process(&config.stealth.process_cloak_name) {
             tracing::warn!("Process cloaking failed: {}", e);
         }
@@ -227,7 +261,7 @@ async fn main() -> Result<(), GhostError> {
 
     // Create app
     let config_path = GhostConfig::config_path();
-    let mut app = GhostApp::new(config);
+    let mut app = GhostApp::new(config, safe_mode);
 
     // Create initial pane
     app.panes.create_pane(&app.config.general.shell);
@@ -240,22 +274,30 @@ async fn main() -> Result<(), GhostError> {
         app.decoy_system.activate();
     }
 
-    // Initialize plugin system
+    // Initialize plugin system (skip in safe mode)
     let mut plugins = PluginRegistry::new();
-    plugins.register(Box::new(VersionPlugin))?;
-    plugins.register(Box::new(UptimePlugin::new()))?;
+    if !safe_mode {
+        if let Err(e) = plugins.register(Box::new(VersionPlugin)) {
+            tracing::warn!("Failed to register VersionPlugin: {}", e);
+        }
+        if let Err(e) = plugins.register(Box::new(UptimePlugin::new())) {
+            tracing::warn!("Failed to register UptimePlugin: {}", e);
+        }
 
-    let plugin_ctx = PluginContext {
-        session_id: app.session_id.to_string(),
-        app_version: env!("CARGO_PKG_VERSION").to_string(),
-        mode: format!("{:?}", app.mode),
-        pane_count: 1,
-    };
-    let init_errors = plugins.init_all(&plugin_ctx);
-    if !init_errors.is_empty() {
-        tracing::warn!("{} plugin(s) failed to initialize", init_errors.len());
+        let plugin_ctx = PluginContext {
+            session_id: app.session_id.to_string(),
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            mode: format!("{:?}", app.mode),
+            pane_count: 1,
+        };
+        let init_errors = plugins.init_all(&plugin_ctx);
+        if !init_errors.is_empty() {
+            tracing::warn!("{} plugin(s) failed to initialize", init_errors.len());
+        }
+        tracing::info!("{} plugin(s) loaded", plugins.count());
+    } else {
+        tracing::info!("Safe mode: plugins disabled");
     }
-    tracing::info!("{} plugin(s) loaded", plugins.count());
 
     // Start config hot-reload watcher
     let config_watcher_rx = match config_watcher::ConfigWatcher::start(config_path) {
@@ -290,8 +332,10 @@ async fn main() -> Result<(), GhostError> {
     let _ = audit_log.log_session_end();
     let _ = audit_log.rotate_logs();
 
-    // Secure shutdown
     app.secure_shutdown();
+
+    // Clear session lock — clean exit
+    GhostConfig::clear_session_lock();
 
     // Restore terminal
     disable_raw_mode()?;
@@ -398,6 +442,11 @@ async fn run_event_loop_async(
                     }
                     Some(config_watcher::ConfigEvent::ParseError(msg)) => {
                         tracing::error!("Config reload failed: {}", msg);
+                    }
+                    Some(config_watcher::ConfigEvent::ValidationError(errors)) => {
+                        for err in &errors {
+                            tracing::error!("Config validation error: {}", err);
+                        }
                     }
                     None => {
                         config_rx = None; // Watcher dropped

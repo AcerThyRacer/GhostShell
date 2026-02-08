@@ -6,11 +6,24 @@
 use zeroize::Zeroize;
 
 /// A secure buffer that is zeroed on drop and optionally mlock'd
-/// to prevent swapping to disk
-#[derive(Clone)]
+/// to prevent swapping to disk.
+/// SECURITY: Clone is manually implemented to preserve mlock status.
 pub struct SecureBuffer {
     data: Vec<u8>,
     locked: bool,
+}
+
+impl Clone for SecureBuffer {
+    fn clone(&self) -> Self {
+        let mut cloned = Self {
+            data: self.data.clone(),
+            locked: false,
+        };
+        // SECURITY: mlock the cloned buffer too — a plain Vec::clone()
+        // would leave the copy unprotected and swappable to disk.
+        cloned.try_mlock();
+        cloned
+    }
 }
 
 impl SecureBuffer {
@@ -35,8 +48,13 @@ impl SecureBuffer {
         buf
     }
 
-    /// Try to mlock the buffer (prevent swapping)
+    /// Try to mlock the buffer (prevent swapping).
+    /// Logs a warning with OS error details on failure.
     fn try_mlock(&mut self) {
+        if self.data.is_empty() {
+            return;
+        }
+
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::Memory::VirtualLock;
@@ -46,18 +64,36 @@ impl SecureBuffer {
                     self.data.len(),
                 );
                 self.locked = result != 0;
+                if !self.locked {
+                    let err = std::io::Error::last_os_error();
+                    eprintln!(
+                        "[GhostShell] WARN: VirtualLock failed for {} bytes: {} \
+                         (key material may be swappable)",
+                        self.data.len(),
+                        err
+                    );
+                }
             }
         }
 
         #[cfg(unix)]
         {
-            use libc::{mlock, ENOMEM};
+            use libc::mlock;
             unsafe {
                 let result = mlock(
                     self.data.as_ptr() as *const _,
                     self.data.len(),
                 );
                 self.locked = result == 0;
+                if !self.locked {
+                    let err = std::io::Error::last_os_error();
+                    eprintln!(
+                        "[GhostShell] WARN: mlock failed for {} bytes: {} \
+                         (key material may be swappable)",
+                        self.data.len(),
+                        err
+                    );
+                }
             }
         }
     }
@@ -139,58 +175,59 @@ impl Drop for SecureBuffer {
     }
 }
 
-/// A secure string that is zeroed on drop
-#[derive(Clone)]
+/// A secure string that is zeroed on drop.
+/// SECURITY: Data is stored only in a single mlock'd `SecureBuffer` —
+/// no duplicate unprotected `String` copy exists in memory.
 pub struct SecureString {
-    inner: String,
     buffer: SecureBuffer,
+}
+
+impl Clone for SecureString {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: self.buffer.clone(),
+        }
+    }
 }
 
 impl SecureString {
     /// Create a new empty secure string
     pub fn new() -> Self {
         Self {
-            inner: String::new(),
             buffer: SecureBuffer::new(0),
         }
     }
 
-    /// Create from a string (copies the data)
+    /// Create from a string (copies the data into mlock'd memory)
     pub fn from_str(s: &str) -> Self {
         let buffer = SecureBuffer::from_data(s.as_bytes());
-        Self {
-            inner: s.to_string(),
-            buffer,
-        }
+        Self { buffer }
     }
 
-    /// Get the string reference
+    /// Get the string reference.
+    /// SAFETY: The buffer was created from valid UTF-8.
     pub fn as_str(&self) -> &str {
-        &self.inner
+        std::str::from_utf8(self.buffer.as_bytes()).unwrap_or("")
     }
 
     /// Get the length
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.buffer.len()
     }
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.buffer.is_empty()
     }
 
     /// Securely wipe
     pub fn wipe(&mut self) {
-        self.inner.zeroize();
         self.buffer.wipe();
     }
 }
 
 impl Drop for SecureString {
     fn drop(&mut self) {
-        // SECURITY: Zeroize the inner String to prevent key material
-        // from lingering in memory after the SecureString is dropped.
-        self.inner.zeroize();
         // buffer is zeroized by SecureBuffer's own Drop impl
     }
 }
@@ -252,8 +289,12 @@ pub fn prevent_core_dumps() {
 
     #[cfg(windows)]
     {
-        // On Windows, disable Windows Error Reporting crash dumps
-        // This is less critical as WER can be configured system-wide
+        // Disable Windows Error Reporting crash dumps which can contain
+        // full process memory including key material.
+        unsafe {
+            // SEM_FAILCRITICALERRORS (0x0001) | SEM_NOGPFAULTERRORBOX (0x0002)
+            windows_sys::Win32::System::Diagnostics::Debug::SetErrorMode(0x0001 | 0x0002);
+        }
     }
 }
 
@@ -267,29 +308,46 @@ pub struct GuardedBuffer {
     len: usize,
 }
 
+/// Start canary pattern
+const CANARY_START: [u8; 8] = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
+/// End canary pattern
+const CANARY_END: [u8; 8] = [0xBE, 0xBA, 0xFE, 0xCA, 0xEF, 0xBE, 0xAD, 0xDE];
+
 impl GuardedBuffer {
     /// Create a new guard-page protected buffer
     pub fn new(size: usize) -> Self {
         // Allocate with extra space for guard detection patterns
         let mut data = vec![0u8; size + 16]; // 8-byte canary on each side
 
-        // Place canary patterns
-        let canary_start: [u8; 8] = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
-        let canary_end: [u8; 8] = [0xBE, 0xBA, 0xFE, 0xCA, 0xEF, 0xBE, 0xAD, 0xDE];
-
-        data[..8].copy_from_slice(&canary_start);
-        data[size + 8..].copy_from_slice(&canary_end);
+        data[..8].copy_from_slice(&CANARY_START);
+        data[size + 8..].copy_from_slice(&CANARY_END);
 
         Self { data, len: size }
     }
 
-    /// Get a reference to the usable buffer (between guard canaries)
+    /// Assert that guard canaries are intact, panicking on corruption.
+    /// Called on every read access to catch overflows early.
+    #[inline]
+    fn assert_integrity(&self) {
+        if self.data[..8] != CANARY_START || self.data[self.len + 8..] != CANARY_END {
+            panic!(
+                "[GhostShell] CRITICAL: GuardedBuffer canary corruption detected! \
+                 Possible buffer overflow/underflow. Aborting for safety."
+            );
+        }
+    }
+
+    /// Get a reference to the usable buffer (between guard canaries).
+    /// Panics if canary corruption is detected.
     pub fn as_bytes(&self) -> &[u8] {
+        self.assert_integrity();
         &self.data[8..8 + self.len]
     }
 
-    /// Get a mutable reference to the usable buffer
+    /// Get a mutable reference to the usable buffer.
+    /// Panics if canary corruption is detected.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        self.assert_integrity();
         &mut self.data[8..8 + self.len]
     }
 
@@ -301,10 +359,7 @@ impl GuardedBuffer {
 
     /// Check if guard canaries are intact (no overflow/underflow)
     pub fn check_integrity(&self) -> bool {
-        let canary_start: [u8; 8] = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
-        let canary_end: [u8; 8] = [0xBE, 0xBA, 0xFE, 0xCA, 0xEF, 0xBE, 0xAD, 0xDE];
-
-        self.data[..8] == canary_start && self.data[self.len + 8..] == canary_end
+        self.data[..8] == CANARY_START && self.data[self.len + 8..] == CANARY_END
     }
 
     /// Get the buffer size
@@ -375,14 +430,18 @@ impl SecurePool {
         }
     }
 
-    /// Free a block back to the pool
+    /// Free a block back to the pool.
+    /// Immediately zeroes the freed block to prevent stale key material.
     pub fn free(&mut self, offset: usize) {
         let idx = offset / self.block_size;
         if idx < self.allocated.len() {
             self.allocated[idx] = false;
-            // Wipe the freed block in the underlying buffer
-            // (SecureBuffer doesn't expose mutable access to sub-slices,
-            // so we track deallocation state for zeroing on drop)
+            // Immediately wipe the freed block
+            let start = offset;
+            let end = offset + self.block_size;
+            if end <= self.buffer.len() {
+                self.buffer.as_bytes_mut()[start..end].zeroize();
+            }
         }
     }
 
@@ -457,10 +516,47 @@ mod tests {
     }
 
     #[test]
+    fn test_secure_buffer_write_overwrites() {
+        let mut buf = SecureBuffer::from_data(b"original");
+        buf.write(b"new");
+        assert_eq!(buf.len(), 3);
+        assert_eq!(buf.as_bytes(), b"new");
+    }
+
+    #[test]
+    fn test_secure_buffer_empty() {
+        let buf = SecureBuffer::new(0);
+        assert!(buf.is_empty());
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_secure_buffer_mlock_status() {
+        // On most systems mlock should succeed for small buffers
+        let buf = SecureBuffer::new(64);
+        // We just verify the flag is set and doesn't panic
+        let _ = buf.is_locked();
+        assert_eq!(buf.len(), 64);
+    }
+
+    #[test]
     fn test_secure_string() {
         let ss = SecureString::from_str("password123");
         assert_eq!(ss.as_str(), "password123");
         assert_eq!(ss.len(), 11);
+    }
+
+    #[test]
+    fn test_secure_string_wipe() {
+        let mut ss = SecureString::from_str("secret");
+        ss.wipe();
+        assert!(ss.is_empty() || ss.as_str().bytes().all(|b| b == 0));
+    }
+
+    #[test]
+    fn test_secure_string_default() {
+        let ss = SecureString::default();
+        assert!(ss.is_empty());
     }
 
     #[test]
@@ -470,7 +566,14 @@ mod tests {
         assert!(data.iter().all(|&b| b == 0));
     }
 
-    // ── Phase 3 new tests ──
+    #[test]
+    fn test_secure_wipe_single_pass() {
+        let mut data = vec![0xAA; 32];
+        secure_wipe(&mut data, 1);
+        assert!(data.iter().all(|&b| b == 0));
+    }
+
+    // ── GuardedBuffer tests ──
 
     #[test]
     fn test_guarded_buffer_integrity() {
@@ -489,6 +592,35 @@ mod tests {
         assert_eq!(buf.len(), 32);
         assert!(!buf.is_empty());
     }
+
+    #[test]
+    #[should_panic(expected = "canary corruption")]
+    fn test_guarded_buffer_start_canary_corruption() {
+        let mut buf = GuardedBuffer::new(32);
+        // Corrupt the start canary directly
+        buf.data[0] = 0xFF;
+        // This should panic due to assert_integrity()
+        let _ = buf.as_bytes();
+    }
+
+    #[test]
+    #[should_panic(expected = "canary corruption")]
+    fn test_guarded_buffer_end_canary_corruption() {
+        let mut buf = GuardedBuffer::new(32);
+        // Corrupt the end canary directly
+        let end_idx = 32 + 8;
+        buf.data[end_idx] = 0xFF;
+        let _ = buf.as_bytes();
+    }
+
+    #[test]
+    fn test_guarded_buffer_zero_size() {
+        let buf = GuardedBuffer::new(0);
+        assert!(buf.is_empty());
+        assert!(buf.check_integrity());
+    }
+
+    // ── SecurePool tests ──
 
     #[test]
     fn test_secure_pool_allocate_free() {
@@ -519,6 +651,40 @@ mod tests {
     }
 
     #[test]
+    fn test_secure_pool_wipe_on_free() {
+        let mut pool = SecurePool::new(256);
+        let offset = pool.allocate().unwrap();
+
+        // Write non-zero data into the block
+        pool.buffer.as_bytes_mut()[offset..offset + 32]
+            .copy_from_slice(&[0xAA; 32]);
+
+        // Free should wipe the block
+        pool.free(offset);
+
+        // Verify the block is now zeroed
+        assert!(pool.buffer.as_bytes()[offset..offset + 32]
+            .iter()
+            .all(|&b| b == 0));
+    }
+
+    #[test]
+    fn test_secure_pool_reallocate_after_free() {
+        let mut pool = SecurePool::new(64); // 2 blocks
+        let o1 = pool.allocate().unwrap();
+        let _o2 = pool.allocate().unwrap();
+        assert!(pool.allocate().is_none());
+
+        pool.free(o1);
+        assert!(pool.has_capacity());
+
+        let o3 = pool.allocate().unwrap();
+        assert_eq!(o3, o1); // Should reuse the freed block
+    }
+
+    // ── MemoryStats tests ──
+
+    #[test]
     fn test_memory_stats_display() {
         let stats = MemoryStats {
             total_capacity: 4096,
@@ -530,5 +696,18 @@ mod tests {
         };
         assert!((stats.usage_percent() - 0.5).abs() < 0.01);
         assert!(stats.display_string().contains("50%"));
+    }
+
+    #[test]
+    fn test_memory_stats_zero_capacity() {
+        let stats = MemoryStats {
+            total_capacity: 0,
+            used_bytes: 0,
+            free_bytes: 0,
+            locked_bytes: 0,
+            total_blocks: 0,
+            used_blocks: 0,
+        };
+        assert_eq!(stats.usage_percent(), 0.0);
     }
 }

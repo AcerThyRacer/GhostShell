@@ -40,7 +40,7 @@ pub fn embed_session(
 
     // Encrypt the session data with a derived key
     let key = keys::generate_master_key();
-    let encrypted = cipher::encrypt_once(&key, &session_data)
+    let encrypted = cipher::encrypt_once(key.as_bytes(), &session_data)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
     // Build the payload: [MAGIC(4)][LENGTH(4)][ENCRYPTED_DATA]

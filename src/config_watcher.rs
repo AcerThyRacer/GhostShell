@@ -3,7 +3,7 @@
 // ║         Watches config.toml for changes, sends reload events    ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
-use crate::config::GhostConfig;
+use crate::config::{GhostConfig, ConfigValidator};
 use crate::error::GhostError;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -14,10 +14,12 @@ use tokio::sync::mpsc;
 /// Events emitted by the config watcher
 #[derive(Debug)]
 pub enum ConfigEvent {
-    /// Config file was modified — new config parsed
+    /// Config file was modified — new config parsed and validated
     Reloaded(GhostConfig),
     /// Config file parse error (non-fatal)
     ParseError(String),
+    /// Config parsed but failed schema validation (non-fatal)
+    ValidationError(Vec<String>),
 }
 
 /// Watches the GhostShell config file for changes and emits reload events
@@ -93,7 +95,15 @@ impl ConfigWatcher {
                 match std::fs::read_to_string(&path) {
                     Ok(content) => match toml::from_str::<GhostConfig>(&content) {
                         Ok(config) => {
-                            let _ = tx.send(ConfigEvent::Reloaded(config)).await;
+                            // Validate before emitting
+                            let errors = ConfigValidator::validate(&config);
+                            if errors.is_empty() {
+                                let _ = tx.send(ConfigEvent::Reloaded(config)).await;
+                            } else {
+                                let _ = tx
+                                    .send(ConfigEvent::ValidationError(errors))
+                                    .await;
+                            }
                         }
                         Err(e) => {
                             let _ = tx
@@ -134,6 +144,9 @@ impl ConfigWatcher {
     pub fn requires_restart(old: &GhostConfig, new: &GhostConfig) -> bool {
         // Security-critical fields require restart
         old.crypto.cipher_algorithm != new.crypto.cipher_algorithm
+            || old.crypto.argon2_memory_kib != new.crypto.argon2_memory_kib
+            || old.crypto.argon2_iterations != new.crypto.argon2_iterations
+            || old.crypto.argon2_parallelism != new.crypto.argon2_parallelism
             || old.stealth.process_cloak_name != new.stealth.process_cloak_name
             || old.general.shell != new.general.shell
             || old.network.listen_port != new.network.listen_port

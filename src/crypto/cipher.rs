@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let key = generate_master_key();
-        let mut ctx = CipherContext::new(&key).unwrap();
+        let mut ctx = CipherContext::new(key.as_bytes()).unwrap();
 
         let plaintext = b"Hello, GhostShell! This is a secret message.";
         let packet = ctx.encrypt(plaintext, None).unwrap();
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn test_encrypt_with_aad() {
         let key = generate_master_key();
-        let mut ctx = CipherContext::new(&key).unwrap();
+        let mut ctx = CipherContext::new(key.as_bytes()).unwrap();
 
         let plaintext = b"authenticated data";
         let aad = b"metadata";
@@ -243,8 +243,8 @@ mod tests {
         let key1 = generate_master_key();
         let key2 = generate_master_key();
 
-        let mut ctx1 = CipherContext::new(&key1).unwrap();
-        let ctx2 = CipherContext::new(&key2).unwrap();
+        let mut ctx1 = CipherContext::new(key1.as_bytes()).unwrap();
+        let ctx2 = CipherContext::new(key2.as_bytes()).unwrap();
 
         let plaintext = b"secret";
         let packet = ctx1.encrypt(plaintext, None).unwrap();
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn test_packet_serialization() {
         let key = generate_master_key();
-        let mut ctx = CipherContext::new(&key).unwrap();
+        let mut ctx = CipherContext::new(key.as_bytes()).unwrap();
 
         let plaintext = b"serialize me";
         let packet = ctx.encrypt(plaintext, None).unwrap();
@@ -276,15 +276,15 @@ mod tests {
         let key = generate_master_key();
         let plaintext = b"one-shot test";
 
-        let encrypted = encrypt_once(&key, plaintext).unwrap();
-        let decrypted = decrypt_once(&key, &encrypted).unwrap();
+        let encrypted = encrypt_once(key.as_bytes(), plaintext).unwrap();
+        let decrypted = decrypt_once(key.as_bytes(), &encrypted).unwrap();
         assert_eq!(&decrypted, plaintext);
     }
 
     #[test]
     fn test_nonce_exhaustion() {
         let key = generate_master_key();
-        let mut ctx = CipherContext::new(&key).unwrap();
+        let mut ctx = CipherContext::new(key.as_bytes()).unwrap();
 
         // Simulate being near the limit
         ctx.nonce_counter = MAX_MESSAGES - 1;
@@ -304,14 +304,14 @@ mod tests {
     fn test_rekey_resets_counter() {
         let key1 = generate_master_key();
         let key2 = generate_master_key();
-        let mut ctx = CipherContext::new(&key1).unwrap();
+        let mut ctx = CipherContext::new(key1.as_bytes()).unwrap();
 
         // Exhaust the nonce space
         ctx.nonce_counter = MAX_MESSAGES;
         assert_eq!(ctx.remaining_capacity(), 0);
 
         // Rekey should reset
-        ctx.rekey(&key2).unwrap();
+        ctx.rekey(key2.as_bytes()).unwrap();
         assert_eq!(ctx.messages_encrypted(), 0);
         assert_eq!(ctx.remaining_capacity(), MAX_MESSAGES);
 
@@ -323,7 +323,7 @@ mod tests {
     #[test]
     fn test_remaining_capacity() {
         let key = generate_master_key();
-        let mut ctx = CipherContext::new(&key).unwrap();
+        let mut ctx = CipherContext::new(key.as_bytes()).unwrap();
 
         assert_eq!(ctx.remaining_capacity(), MAX_MESSAGES);
         assert_eq!(ctx.messages_encrypted(), 0);

@@ -387,21 +387,37 @@ impl Default for GhostConfig {
 // ── Loading ───────────────────────────────────────────────────────
 
 impl GhostConfig {
-    /// Load configuration from default paths, merging with defaults
+    /// Load configuration from default paths, merging with defaults.
+    /// SECURITY: Validates loaded config and logs warnings for misconfigurations.
     pub fn load() -> Self {
         // Try user config first
         let config_path = Self::config_path();
-        if config_path.exists() {
+        let config = if config_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
                 if let Ok(config) = toml::from_str::<GhostConfig>(&content) {
-                    return config;
+                    config
+                } else {
+                    // Try bundled default config
+                    let default_content = include_str!("../config/default.toml");
+                    toml::from_str(default_content).unwrap_or_default()
                 }
+            } else {
+                let default_content = include_str!("../config/default.toml");
+                toml::from_str(default_content).unwrap_or_default()
             }
+        } else {
+            // Try bundled default config
+            let default_content = include_str!("../config/default.toml");
+            toml::from_str(default_content).unwrap_or_default()
+        };
+
+        // SECURITY: Validate on load
+        let warnings = ConfigValidator::validate(&config);
+        for w in &warnings {
+            tracing::warn!("Config: {}", w);
         }
 
-        // Try bundled default config
-        let default_content = include_str!("../config/default.toml");
-        toml::from_str(default_content).unwrap_or_default()
+        config
     }
 
     /// Get the config file path (~/.ghostshell/config.toml)
@@ -432,7 +448,7 @@ impl GhostConfig {
         dir
     }
 
-    /// Save current config to file
+    /// Save current config to file using atomic write (write-to-temp, fsync, rename).
     pub fn save(&self) -> std::io::Result<()> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
@@ -440,7 +456,167 @@ impl GhostConfig {
         }
         let content = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        atomic_write(&path, content.as_bytes())
+    }
+
+    // ── Crash Recovery ────────────────────────────────────────────
+
+    /// Get the session lock file path (~/.ghostshell/.session.lock)
+    pub fn session_lock_path() -> PathBuf {
+        Self::data_dir().join(".session.lock")
+    }
+
+    /// Write a session lock file (called on startup)
+    pub fn write_session_lock() -> std::io::Result<()> {
+        let path = Self::session_lock_path();
+        let pid = std::process::id();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let content = format!("pid={}\ntimestamp={}\n", pid, timestamp);
         std::fs::write(path, content)
+    }
+
+    /// Remove the session lock file (called on clean exit)
+    pub fn clear_session_lock() {
+        let _ = std::fs::remove_file(Self::session_lock_path());
+    }
+
+    /// Detect if the previous session crashed (stale lock file exists)
+    pub fn detect_crash() -> bool {
+        Self::session_lock_path().exists()
+    }
+}
+
+// ── Atomic File Write ─────────────────────────────────────────────
+
+/// Write data atomically: write to temp file, fsync, then rename.
+/// Prevents partial writes from corrupting state files.
+pub fn atomic_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let parent = path.parent().unwrap_or(std::path::Path::new("."));
+    // SECURITY: Include timestamp to prevent predictable temp filenames
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temp_path = parent.join(format!(
+        ".tmp_{}_{}_{}",
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+        std::process::id(),
+        nonce
+    ));
+
+    // Write to temp file
+    let mut file = std::fs::File::create(&temp_path)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    drop(file);
+
+    // Atomically rename into place
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
+}
+
+// ── Config Validator ──────────────────────────────────────────────
+
+/// Validates a GhostConfig against security and schema rules.
+/// Returns a list of validation errors (empty = valid).
+pub struct ConfigValidator;
+
+impl ConfigValidator {
+    /// Validate a config, returning a list of error messages.
+    pub fn validate(config: &GhostConfig) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        // Crypto: Argon2 parameters must be safe minimums
+        if config.crypto.argon2_memory_kib < 8192 {
+            errors.push(format!(
+                "crypto.argon2_memory_kib ({}) is below safe minimum (8192)",
+                config.crypto.argon2_memory_kib
+            ));
+        }
+        if config.crypto.argon2_iterations < 1 {
+            errors.push("crypto.argon2_iterations must be >= 1".to_string());
+        }
+        if config.crypto.argon2_parallelism < 1 {
+            errors.push("crypto.argon2_parallelism must be >= 1".to_string());
+        }
+
+        // IDS thresholds
+        if !(0.0..=1.0).contains(&config.ids.anomaly_threshold) {
+            errors.push(format!(
+                "ids.anomaly_threshold ({}) must be between 0.0 and 1.0",
+                config.ids.anomaly_threshold
+            ));
+        }
+        if !(0.0..=1.0).contains(&config.ids.sensitivity) {
+            errors.push(format!(
+                "ids.sensitivity ({}) must be between 0.0 and 1.0",
+                config.ids.sensitivity
+            ));
+        }
+        if !(0.0..=1.0).contains(&config.ids.biometric_confidence_threshold) {
+            errors.push(format!(
+                "ids.biometric_confidence_threshold ({}) must be between 0.0 and 1.0",
+                config.ids.biometric_confidence_threshold
+            ));
+        }
+
+        // Scrollback wipe passes
+        if config.scrollback.wipe_passes < 1 || config.scrollback.wipe_passes > 35 {
+            errors.push(format!(
+                "scrollback.wipe_passes ({}) must be between 1 and 35",
+                config.scrollback.wipe_passes
+            ));
+        }
+
+        // Enum validation: log level
+        let valid_log_levels = ["trace", "debug", "info", "warn", "error"];
+        if !valid_log_levels.contains(&config.general.log_level.as_str()) {
+            errors.push(format!(
+                "general.log_level '{}' is invalid (expected one of: {:?})",
+                config.general.log_level, valid_log_levels
+            ));
+        }
+
+        // Enum validation: dead_man_action
+        let valid_actions = ["lock", "wipe", "exit"];
+        if !valid_actions.contains(&config.stealth.dead_man_action.as_str()) {
+            errors.push(format!(
+                "stealth.dead_man_action '{}' is invalid (expected one of: {:?})",
+                config.stealth.dead_man_action, valid_actions
+            ));
+        }
+
+        // Enum validation: theme status_bar
+        let valid_bar_positions = ["top", "bottom", "hidden"];
+        if !valid_bar_positions.contains(&config.theme.status_bar.as_str()) {
+            errors.push(format!(
+                "theme.status_bar '{}' is invalid (expected one of: {:?})",
+                config.theme.status_bar, valid_bar_positions
+            ));
+        }
+
+        // Enum validation: biometric action
+        let valid_bio_actions = ["warn", "lock", "kill", "ignore"];
+        if !valid_bio_actions.contains(&config.ids.biometric_action.as_str()) {
+            errors.push(format!(
+                "ids.biometric_action '{}' is invalid (expected one of: {:?})",
+                config.ids.biometric_action, valid_bio_actions
+            ));
+        }
+
+        errors
+    }
+
+    /// Check if a config is valid
+    pub fn is_valid(config: &GhostConfig) -> bool {
+        Self::validate(config).is_empty()
     }
 }
 
@@ -462,5 +638,82 @@ mod tests {
         let serialized = toml::to_string_pretty(&config).unwrap();
         let deserialized: GhostConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(config.crypto.argon2_memory_kib, deserialized.crypto.argon2_memory_kib);
+    }
+
+    #[test]
+    fn test_default_config_is_valid() {
+        let config = GhostConfig::default();
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.is_empty(), "Default config should be valid, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_validator_rejects_weak_argon2() {
+        let mut config = GhostConfig::default();
+        config.crypto.argon2_memory_kib = 1024; // Too low
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.iter().any(|e| e.contains("argon2_memory_kib")));
+    }
+
+    #[test]
+    fn test_validator_rejects_bad_threshold() {
+        let mut config = GhostConfig::default();
+        config.ids.anomaly_threshold = 1.5; // Out of range
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.iter().any(|e| e.contains("anomaly_threshold")));
+    }
+
+    #[test]
+    fn test_validator_rejects_bad_log_level() {
+        let mut config = GhostConfig::default();
+        config.general.log_level = "verbose".to_string();
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.iter().any(|e| e.contains("log_level")));
+    }
+
+    #[test]
+    fn test_validator_rejects_bad_dead_man_action() {
+        let mut config = GhostConfig::default();
+        config.stealth.dead_man_action = "explode".to_string();
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.iter().any(|e| e.contains("dead_man_action")));
+    }
+
+    #[test]
+    fn test_validator_rejects_bad_wipe_passes() {
+        let mut config = GhostConfig::default();
+        config.scrollback.wipe_passes = 0;
+        assert!(!ConfigValidator::is_valid(&config));
+
+        config.scrollback.wipe_passes = 36;
+        assert!(!ConfigValidator::is_valid(&config));
+    }
+
+    #[test]
+    fn test_validator_rejects_bad_status_bar() {
+        let mut config = GhostConfig::default();
+        config.theme.status_bar = "left".to_string();
+        let errors = ConfigValidator::validate(&config);
+        assert!(errors.iter().any(|e| e.contains("status_bar")));
+    }
+
+    #[test]
+    fn test_atomic_write() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("ghostshell_test_atomic.toml");
+        let data = b"[test]\nkey = \"value\"\n";
+
+        atomic_write(&path, data).expect("atomic write should succeed");
+        let read_back = std::fs::read(&path).expect("should be readable");
+        assert_eq!(read_back, data);
+
+        // Cleanup
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_session_lock_path() {
+        let path = GhostConfig::session_lock_path();
+        assert!(path.ends_with(".session.lock"));
     }
 }

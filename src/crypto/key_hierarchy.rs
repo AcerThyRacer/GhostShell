@@ -364,14 +364,16 @@ pub fn split_secret(secret: &[u8], k: u8, n: u8) -> Result<Vec<ShamirShare>, &'s
         }
 
         // Wipe the coefficients
-        coeffs.iter_mut().for_each(|b| *b = 0);
+        coeffs.zeroize();
     }
 
     Ok(shares)
 }
 
 /// Reconstruct a secret from k shares using Lagrange interpolation in GF(256)
-pub fn reconstruct_secret(shares: &[ShamirShare]) -> Result<Vec<u8>, &'static str> {
+/// SECURITY: Returns a SecureBuffer (mlock'd, zeroize-on-drop) since the
+/// reconstructed value is sensitive master key material.
+pub fn reconstruct_secret(shares: &[ShamirShare]) -> Result<SecureBuffer, &'static str> {
     if shares.is_empty() {
         return Err("need at least one share");
     }
@@ -420,12 +422,16 @@ pub fn reconstruct_secret(shares: &[ShamirShare]) -> Result<Vec<u8>, &'static st
         secret[byte_idx] = value;
     }
 
-    Ok(secret)
+    let result = SecureBuffer::from_data(&secret);
+    // SECURITY: Zeroize the intermediate Vec before dropping
+    secret.zeroize();
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::keys::{generate_master_key, MASTER_KEY_SIZE};
 
     #[test]
     fn test_gf256_mul_identity() {
@@ -457,13 +463,13 @@ mod tests {
 
         // Any 2 shares should reconstruct
         let recovered = reconstruct_secret(&shares[0..2]).unwrap();
-        assert_eq!(&recovered, secret);
+        assert_eq!(recovered.as_bytes(), secret);
 
         let recovered = reconstruct_secret(&shares[1..3]).unwrap();
-        assert_eq!(&recovered, secret);
+        assert_eq!(recovered.as_bytes(), secret);
 
         let recovered = reconstruct_secret(&[shares[0].clone(), shares[2].clone()]).unwrap();
-        assert_eq!(&recovered, secret);
+        assert_eq!(recovered.as_bytes(), secret);
     }
 
     #[test]
@@ -474,10 +480,10 @@ mod tests {
 
         // 3 shares should suffice
         let recovered = reconstruct_secret(&shares[0..3]).unwrap();
-        assert_eq!(&recovered, &secret[..]);
+        assert_eq!(recovered.as_bytes(), &secret[..]);
 
         let recovered = reconstruct_secret(&shares[2..5]).unwrap();
-        assert_eq!(&recovered, &secret[..]);
+        assert_eq!(recovered.as_bytes(), &secret[..]);
     }
 
     #[test]
@@ -488,7 +494,7 @@ mod tests {
         // Only 2 shares with a 3-of-5 scheme should NOT recover correctly
         let recovered = reconstruct_secret(&shares[0..2]).unwrap();
         // The result should exist but be incorrect
-        assert_ne!(&recovered, &secret[..]);
+        assert_ne!(recovered.as_bytes(), &secret[..]);
     }
 
     #[test]
@@ -502,7 +508,7 @@ mod tests {
     fn test_key_hierarchy_creation() {
         let master = generate_master_key();
         let config = CryptoConfig::default();
-        let hierarchy = KeyHierarchy::new(&master, &config);
+        let hierarchy = KeyHierarchy::new(master.as_bytes(), &config);
 
         // All keys should be 32 bytes
         assert_eq!(hierarchy.key_for(KeyPurpose::Session).len(), MASTER_KEY_SIZE);
@@ -520,7 +526,7 @@ mod tests {
     fn test_key_rotation() {
         let master = generate_master_key();
         let config = CryptoConfig::default();
-        let mut hierarchy = KeyHierarchy::new(&master, &config);
+        let mut hierarchy = KeyHierarchy::new(master.as_bytes(), &config);
 
         let old_key = hierarchy.key_for(KeyPurpose::Session).as_bytes().to_vec();
         assert_eq!(hierarchy.generation(KeyPurpose::Session), 0);

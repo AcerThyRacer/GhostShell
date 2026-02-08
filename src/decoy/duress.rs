@@ -15,6 +15,8 @@
 
 use crate::crypto::keys;
 use crate::crypto::secure_mem::SecureBuffer;
+use subtle::ConstantTimeEq;
+use zeroize::Zeroize;
 
 /// Domain separator used to derive the duress password from the primary.
 /// Changing this constant will invalidate all existing duress passwords.
@@ -72,12 +74,14 @@ impl DuressAuth {
 
         // Always derive the duress hash (even if duress is "disabled")
         // This ensures no timing or config difference reveals duress support
-        let duress_password = format!("{}{}", primary_password, suffix);
+        let mut duress_password = format!("{}{}", primary_password, suffix);
         let duress_hash = keys::derive_key_from_password(
             duress_password.as_bytes(),
             &salt,
             &config,
         );
+        // SECURITY: Zeroize the plaintext duress password immediately
+        duress_password.zeroize();
 
         Self {
             primary_hash,
@@ -105,21 +109,19 @@ impl DuressAuth {
         );
 
         // ALWAYS compute both comparisons — do NOT short-circuit
-        let primary_match = constant_time_eq(
-            attempt_hash.as_bytes(),
+        let primary_match = attempt_hash.as_bytes().ct_eq(
             self.primary_hash.as_bytes(),
         );
 
-        let duress_match = constant_time_eq(
-            attempt_hash.as_bytes(),
+        let duress_match = attempt_hash.as_bytes().ct_eq(
             self.duress_hash.as_bytes(),
         );
 
         // Branch only after both comparisons are complete
-        if primary_match {
+        if primary_match.into() {
             self.failed_attempts = 0;
             AuthResult::Authenticated
-        } else if duress_match {
+        } else if duress_match.into() {
             self.failed_attempts = 0;
             AuthResult::Duress
         } else {
@@ -160,19 +162,7 @@ impl DuressAuth {
     }
 }
 
-/// Constant-time byte comparison (prevents timing side-channel attacks)
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
 
-    let mut result: u8 = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-
-    result == 0
-}
 
 #[cfg(test)]
 mod tests {
@@ -214,10 +204,12 @@ mod tests {
     }
 
     #[test]
-    fn test_constant_time_eq() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-        assert!(!constant_time_eq(b"hello", b"world"));
-        assert!(!constant_time_eq(b"short", b"longer"));
+    fn test_constant_time_eq_via_subtle() {
+        // Verify subtle::ConstantTimeEq works as expected
+        assert!(bool::from(b"hello".ct_eq(b"hello")));
+        assert!(!bool::from(b"hello".ct_eq(b"world")));
+        // Different lengths: subtle handles this safely
+        assert!(!bool::from(b"short".ct_eq(b"longer")));
     }
 
     #[test]
